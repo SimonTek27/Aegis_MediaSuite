@@ -19,31 +19,19 @@ Core ideas:
 | **App** | **Description** |
 |:--------|:----------------|
 | **Launcher** | Main menu where to start your desired project and browse recent files |
-| **Media Player** | Playback audio/video/disc/remote files and it represents the main application |
-| **Sound Editor** | Edit sound files using a modern app inspired by KWave/Audacity |
+| **Media Player** | mpv‑powered audio/video playback, MPRIS2 integration, loudness‑normalized output and spectrum analysis. |
+| **Audio Editor** | destructive editor with waveform + spectral views, effects chains and batch processing. |
 | **Video Editor** | Edit your videos with an app inspired by Kdenlive |
-| **Disc Burner** | Burn your media on disc |
+| **Disc Tools** | secure CD ripping, CD‑Text, and audio/data/bd burning via libburn/libcdio |
+| **DJ Mixer** | dual‑deck mixer with planned timecode support, BPM sync, 3‑band EQ, crossfader curves and mix recording |
 | **Karaoke** | Karaoke app |
 | **Modtracker** | Compose music using tracker |
 | **DAW** | DAW app |
 | **Middleware** | Middleware app for developers |
 | **Converter** | A/V converter |
 | **Library** | SQLite database, TagLib‑based metadata, smart playlists and folder watching |
-| **Streaming** | integration with yt‑dlp, internet radio, IPTV/M3U and capture devices |
+| **Streaming** | integration with yt‑dlp, internet radio, IPTV/M3U and capture devices via **Media Player** |
 | **Label Maker** | Print labels |
-
-- **Media Player** – mpv‑powered audio/video playback, MPRIS2 integration,
-  loudness‑normalized output and spectrum analysis.
-- **Audio Editor** – destructive editor with waveform +
-  spectral views, effects chains and batch processing.
-- **DJ Mixer** – dual‑deck mixer with planned timecode support, BPM sync,
-  3‑band EQ, crossfader curves and mix recording.
-- **Disc Tools** – secure CD ripping, CD‑Text, and audio/data/bd burning via
-  libburn/libcdio.
-- **Streaming** – integration with yt‑dlp, internet radio, IPTV/M3U and
-  capture devices.
-- **Library** – SQLite database, TagLib‑based metadata, smart playlists and
-  folder watching.
 
 See:
 - `audio.md` for details of the audio engine and DSP graph
