@@ -16,8 +16,6 @@ Core ideas:
 
 ## Main Components
 
-|:--------|:----------------|
-| Aegis MediaSuite |
 | **App** | **Description** |
 |:--------|:----------------|
 | **Launcher** | Main menu where to start your desired project and browse recent files |
