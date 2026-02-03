@@ -31,11 +31,17 @@
 
 // Optional components (loaded dynamically based on mode)
 #include "library.h"
-#include "audioeditor.h"
+#include "mediaplayer.h"
+#include "audioeditor.h"      // Dedicated audio editing (DAW/waveform)
+#include "videoeditor.h"      // Dedicated video editing (timeline/compositing)
+#include "daw_engine.h"       // Digital Audio Workstation engine
 #include "disc.h"
 #include "discburner.h"
 #include "djmix.h"
 #include "karaoke.h"
+#include "notation_editor.h"
+#include "music_notation.h"
+#include "audio_daw.h"        // Unified DAW with notation
 #include "disc_labelmaker.h"
 #include "capture.h"
 
@@ -49,26 +55,35 @@
 // Forward declarations for plugin implementations
 namespace Aegis {
     class MediaPlayerPlugin;
-    class EditorPlugin;
+    class AudioEditorPlugin;      // Waveform editing
+    class VideoEditorPlugin;      // Video timeline editing
+    class DAWPlugin;              // Digital Audio Workstation (tracks + notation)
     class DiscBurnerPlugin;
     class DJMixPlugin;
     class KaraokePlugin;
+    class MusicNotationPlugin;
 }
 
 namespace Aegis {
     enum class AppMode {
-        MediaPlayer,
-        SoundEditor,
-        DiscBurner,
-        DJMixer,
-        KaraokePlayer,
-        LabelMaker
+        MediaPlayer,           // General media playback (audio/video)
+        AudioEditor,           // Waveform editing, mastering, effects
+        VideoEditor,           // Timeline editing, compositing, color grading
+        DAW,                   // Digital Audio Workstation (multi-track + notation)
+        DiscBurner,            // CD/DVD/BD burning and ripping
+        DJMixer,               // Live DJ mixing with decks
+        KaraokePlayer,         // Karaoke hosting and playback
+        MusicNotationEditor,   // Score editing (integrated into DAW mode)
+        Converter,             // Batch media conversion
+        MiddlewareEditor,      // Audio middleware design
+        LabelMaker             // Disc label printing
     };
 
     struct AppContext {
         QQmlApplicationEngine* engine = nullptr;
         QStringList arguments;
         QVariantMap config;
+        AppMode mode = AppMode::MediaPlayer;
     };
 }
 
@@ -89,7 +104,6 @@ public:
     bool sendToPrimary(const QString &message, const QStringList &files = {}) {
         Q_UNUSED(message);
         Q_UNUSED(files);
-        // TODO: Implement D-Bus or socket-based IPC for KDE/Linux
         qDebug() << "IPC not implemented, running as independent instance";
         return false;
     }
@@ -127,7 +141,7 @@ private:
 };
 
 /**
- * @brief Command line handler for different modes
+ * @brief Command line handler for different modes with clear separation
  */
 class CommandLineHandler {
 public:
@@ -160,14 +174,20 @@ public:
                 result.mode = stringToMode(modeStr);
             } else if (arg == "--mediaplayer") {
                 result.mode = Aegis::AppMode::MediaPlayer;
-            } else if (arg == "--editor") {
-                result.mode = Aegis::AppMode::SoundEditor;
-            } else if (arg == "--discburner") {
+            } else if (arg == "--audioeditor" || arg == "--audio-editor") {
+                result.mode = Aegis::AppMode::AudioEditor;
+            } else if (arg == "--videoeditor" || arg == "--video-editor") {
+                result.mode = Aegis::AppMode::VideoEditor;
+            } else if (arg == "--daw") {
+                result.mode = Aegis::AppMode::DAW;
+            } else if (arg == "--discburner" || arg == "--disc-burner") {
                 result.mode = Aegis::AppMode::DiscBurner;
-            } else if (arg == "--djmix") {
+            } else if (arg == "--djmix" || arg == "--dj") {
                 result.mode = Aegis::AppMode::DJMixer;
             } else if (arg == "--karaoke") {
                 result.mode = Aegis::AppMode::KaraokePlayer;
+            } else if (arg == "--notation" || arg == "--score") {
+                result.mode = Aegis::AppMode::MusicNotationEditor;
             } else if (arg == "--labelmaker") {
                 result.mode = Aegis::AppMode::LabelMaker;
             } else if (arg.startsWith("-")) {
@@ -202,22 +222,47 @@ private:
         QString baseName = QFileInfo(argv0).baseName().toLower();
 
         static const QHash<QString, Aegis::AppMode> modeMap = {
+            // Media Player variants
             {"aegis_mediaplayer", Aegis::AppMode::MediaPlayer},
             {"aegis_player", Aegis::AppMode::MediaPlayer},
             {"aegis", Aegis::AppMode::MediaPlayer},
 
-            {"aegis_editor", Aegis::AppMode::SoundEditor},
-            {"aegis_soundeditor", Aegis::AppMode::SoundEditor},
+            // Audio Editor variants (waveform editing)
+            {"aegis_audioeditor", Aegis::AppMode::AudioEditor},
+            {"aegis_soundeditor", Aegis::AppMode::AudioEditor},
+            {"aegis_waveeditor", Aegis::AppMode::AudioEditor},
 
+            // Video Editor variants (timeline editing)
+            {"aegis_videoeditor", Aegis::AppMode::VideoEditor},
+            {"aegis_video", Aegis::AppMode::VideoEditor},
+            {"aegis_cut", Aegis::AppMode::VideoEditor},
+
+            // DAW variants (multi-track + notation)
+            {"aegis_daw", Aegis::AppMode::DAW},
+            {"aegis_studio", Aegis::AppMode::DAW},
+            {"aegis_multitrack", Aegis::AppMode::DAW},
+
+            // Disc Burner variants
             {"aegis_discburner", Aegis::AppMode::DiscBurner},
             {"aegis_disc", Aegis::AppMode::DiscBurner},
+            {"aegis_burner", Aegis::AppMode::DiscBurner},
 
+            // DJ Mixer variants
             {"aegis_djmix", Aegis::AppMode::DJMixer},
+            {"aegis_dj", Aegis::AppMode::DJMixer},
             {"aegis_mix", Aegis::AppMode::DJMixer},
 
+            // Karaoke variants
             {"aegis_karaoke", Aegis::AppMode::KaraokePlayer},
             {"aegis_sing", Aegis::AppMode::KaraokePlayer},
+            {"aegis_kj", Aegis::AppMode::KaraokePlayer},
 
+            // Notation variants
+            {"aegis_notation", Aegis::AppMode::MusicNotationEditor},
+            {"aegis_score", Aegis::AppMode::MusicNotationEditor},
+            {"aegis_musescore", Aegis::AppMode::MusicNotationEditor},
+
+            // Label Maker variants
             {"aegis_labelmaker", Aegis::AppMode::LabelMaker},
             {"aegis_label", Aegis::AppMode::LabelMaker}
         };
@@ -229,28 +274,59 @@ private:
         QFileInfo info(file);
         QString suffix = info.suffix().toLower();
 
-        // Audio files -> Media Player
-        static const QStringList audioExtensions = {"mp3", "flac", "ogg", "wav", "m4a", "opus", "aac"};
-        if (audioExtensions.contains(suffix)) {
-            return Aegis::AppMode::MediaPlayer;
+        // Video project files -> Video Editor
+        static const QStringList videoProjectExtensions = {
+            "aegisvid", "kdenlive", "mlt", "prproj", "aep", "veg"
+        };
+        if (videoProjectExtensions.contains(suffix)) {
+            return Aegis::AppMode::VideoEditor;
         }
 
-        // Video files -> Media Player
-        static const QStringList videoExtensions = {"mp4", "mkv", "avi", "mov", "webm", "wmv", "flv"};
+        // Audio project files -> DAW
+        static const QStringList dawProjectExtensions = {
+            "aegisproj", "flp", "als", "ptx", "logicx", "cpr", "reaper"
+        };
+        if (dawProjectExtensions.contains(suffix)) {
+            return Aegis::AppMode::DAW;
+        }
+
+        // Audio editor project files (waveform mastering)
+        static const QStringList audioProjectExtensions = {
+            "aup3", "arp", "sfk", "pkf"
+        };
+        if (audioProjectExtensions.contains(suffix)) {
+            return Aegis::AppMode::AudioEditor;
+        }
+
+        // Notation files -> DAW or Notation Editor
+        static const QStringList notationExtensions = {
+            "xml", "musicxml", "mxl", "mscx", "mscz", "sib", "capx"
+        };
+        if (notationExtensions.contains(suffix)) {
+            return Aegis::AppMode::DAW;  // DAW includes notation
+        }
+
+        // Video files -> Video Editor
+        static const QStringList videoExtensions = {
+            "mp4", "mkv", "avi", "mov", "webm", "wmv", "flv", "m4v"
+        };
         if (videoExtensions.contains(suffix)) {
-            return Aegis::AppMode::MediaPlayer;
+            return Aegis::AppMode::VideoEditor;
+        }
+
+        // Audio files -> Audio Editor (for editing) or Media Player (for playback)
+        static const QStringList audioExtensions = {
+            "wav", "flac", "mp3", "ogg", "m4a", "opus", "aac", "wma"
+        };
+        if (audioExtensions.contains(suffix)) {
+            // Default to AudioEditor for file association, MediaPlayer for general opening
+            return Aegis::AppMode::AudioEditor;
         }
 
         // CDG/Karaoke files -> Karaoke Player
-        static const QStringList karaokeExtensions = {"cdg", "zip", "kfn", "kar", "kfn"};
+        static const QStringList karaokeExtensions = {"cdg", "kfn", "kar", "kfn"};
         if (karaokeExtensions.contains(suffix)) {
             return Aegis::AppMode::KaraokePlayer;
-        }
-
-        // Project files -> Editor
-        static const QStringList projectExtensions = {"aegisproj", "audacity", "flp", "als", "ptx"};
-        if (projectExtensions.contains(suffix)) {
-            return Aegis::AppMode::SoundEditor;
         }
 
         // ISO/Disc images -> Disc Burner
@@ -274,21 +350,30 @@ private:
             {"media", Aegis::AppMode::MediaPlayer},
             {"mediaplayer", Aegis::AppMode::MediaPlayer},
 
-            {"editor", Aegis::AppMode::SoundEditor},
-            {"soundeditor", Aegis::AppMode::SoundEditor},
-            {"audioeditor", Aegis::AppMode::SoundEditor},
+            {"audioeditor", Aegis::AppMode::AudioEditor},
+            {"audio-editor", Aegis::AppMode::AudioEditor},
+            {"soundeditor", Aegis::AppMode::AudioEditor},
+            {"waveeditor", Aegis::AppMode::AudioEditor},
+
+            {"videoeditor", Aegis::AppMode::VideoEditor},
+            {"video-editor", Aegis::AppMode::VideoEditor},
+            {"video", Aegis::AppMode::VideoEditor},
+
+            {"daw", Aegis::AppMode::DAW},
+            {"studio", Aegis::AppMode::DAW},
+            {"multitrack", Aegis::AppMode::DAW},
 
             {"discburner", Aegis::AppMode::DiscBurner},
+            {"disc-burner", Aegis::AppMode::DiscBurner},
             {"disc", Aegis::AppMode::DiscBurner},
-            {"burner", Aegis::AppMode::DiscBurner},
 
             {"djmix", Aegis::AppMode::DJMixer},
             {"dj", Aegis::AppMode::DJMixer},
-            {"mix", Aegis::AppMode::DJMixer},
 
             {"karaoke", Aegis::AppMode::KaraokePlayer},
-            {"sing", Aegis::AppMode::KaraokePlayer},
-            {"kj", Aegis::AppMode::KaraokePlayer},
+
+            {"notation", Aegis::AppMode::MusicNotationEditor},
+            {"score", Aegis::AppMode::MusicNotationEditor},
 
             {"labelmaker", Aegis::AppMode::LabelMaker},
             {"label", Aegis::AppMode::LabelMaker}
@@ -304,7 +389,6 @@ private:
 class ApplicationInitializer {
 public:
     static void setupApplication(QApplication &app) {
-        // Set application attributes
         app.setApplicationName("aegis");
         app.setOrganizationName("Aegis");
         app.setOrganizationDomain("org.aegis");
@@ -320,6 +404,9 @@ public:
             app.setStyle(style);
         }
 
+        // Register custom QML types for all modes
+        registerQmlTypes();
+
         // Load translations
         loadTranslations(app);
 
@@ -328,71 +415,74 @@ public:
         format.setRenderableType(QSurfaceFormat::OpenGL);
         format.setProfile(QSurfaceFormat::CoreProfile);
         format.setVersion(3, 3);
-        format.setSamples(4); // MSAA
+        format.setSamples(4);
         QSurfaceFormat::setDefaultFormat(format);
+    }
+
+    static void registerQmlTypes() {
+        // Audio/Video core components
+        qmlRegisterType<AudioEngine>("Aegis.Audio", 1, 0, "AudioEngine");
+        qmlRegisterType<VideoEngine>("Aegis.Video", 1, 0, "VideoEngine");
+
+        // Editor types
+        qmlRegisterType<AudioEditor>("Aegis.AudioEditor", 1, 0, "AudioEditor");
+        qmlRegisterType<VideoEditor>("Aegis.VideoEditor", 1, 0, "VideoEditor");
+        qmlRegisterType<DAWEngine>("Aegis.DAW", 1, 0, "DAWEngine");
+
+        // Notation types
+        qmlRegisterType<NotationEditor>("Aegis.Notation", 1, 0, "NotationEditor");
+        qmlRegisterType<Score>("Aegis.Notation", 1, 0, "Score");
+        qmlRegisterType<NotationClip>("Aegis.Notation", 1, 0, "NotationClip");
+
+        // Uncreatable types
+        qmlRegisterUncreatableType<MusicNotation>("Aegis.Backend", 1, 0, "MusicNotation",
+                                                  QStringLiteral("MusicNotation is provided by the backend"));
+        qmlRegisterUncreatableType<AudioClip>("Aegis.Backend", 1, 0, "AudioClip",
+                                              QStringLiteral("AudioClip is created through DAWEngine"));
+        qmlRegisterUncreatableType<MidiClip>("Aegis.Backend", 1, 0, "MidiClip",
+                                             QStringLiteral("MidiClip is created through DAWEngine"));
     }
 
     static void loadTranslations(QApplication &app) {
         QTranslator *translator = new QTranslator(&app);
         QString locale = QLocale::system().name();
 
-        // Try resources first
         if (translator->load(":/translations/aegis_" + locale)) {
             app.installTranslator(translator);
-        }
-        // Try application directory
-        else if (translator->load("aegis_" + locale,
+        } else if (translator->load("aegis_" + locale,
             QCoreApplication::applicationDirPath() + "/translations")) {
             app.installTranslator(translator);
+            } else {
+                delete translator;
             }
-            // Try system translations
-            else if (translator->load("aegis_" + locale,
-                QLibraryInfo::location(QLibraryInfo::TranslationsPath))) {
-                app.installTranslator(translator);
-                } else {
-                    delete translator;
-                }
 
-                #ifdef KF6_VERSION
-                // Load KDE translations
-                KLocalizedString::setApplicationDomain("aegis");
-            #endif
+            #ifdef KF6_VERSION
+            KLocalizedString::setApplicationDomain("aegis");
+        #endif
     }
 
     static void setupEnvironment() {
-        // Set XDG directories
         QStringList dataDirs = QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation);
         qputenv("XDG_DATA_DIRS", dataDirs.join(':').toUtf8());
 
         QStringList configDirs = QStandardPaths::standardLocations(QStandardPaths::GenericConfigLocation);
         qputenv("XDG_CONFIG_DIRS", configDirs.join(':').toUtf8());
 
-        // Enable Wayland if available
         if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
-            // Auto-detect Wayland
             if (QFile::exists("/run/wayland/wayland-0") ||
-                qEnvironmentVariableIsSet("WAYLAND_DISPLAY") ||
-                qEnvironmentVariableIsSet("XDG_SESSION_TYPE") &&
-                QString(qgetenv("XDG_SESSION_TYPE")).contains("wayland")) {
+                qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
                 qputenv("QT_QPA_PLATFORM", "wayland;xcb");
                 }
         }
 
-        // Enable MPRIS
-        if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORMTHEME")) {
-            qputenv("QT_QPA_PLATFORMTHEME", "qt5ct");
-        }
-
-        // Set audio backend preference
+        qputenv("QT_QPA_PLATFORMTHEME", "qt5ct");
         qputenv("PULSE_PROP_media.role", "music");
-
-        // Set reasonable OpenGL defaults
         qputenv("QT_OPENGL", "desktop");
     }
 };
 
 /**
- * @brief Stub plugin implementations for compilation
+ * @brief Plugin implementations with clear separation of concerns
  */
 namespace Aegis {
 
@@ -423,6 +513,7 @@ namespace Aegis {
         AppContext m_context;
     };
 
+    // Media Player - General playback (audio/video)
     class MediaPlayerPlugin : public BasePlugin {
     public:
         QString qmlEntryPoint() const override {
@@ -434,17 +525,80 @@ namespace Aegis {
         }
     };
 
-    class EditorPlugin : public BasePlugin {
+    // Audio Editor - Waveform editing, mastering, restoration
+    // Use case: Editing podcasts, mastering albums, noise reduction
+    class AudioEditorPlugin : public BasePlugin {
     public:
         QString qmlEntryPoint() const override {
-            return "qrc:/qml/SoundEditor/Main.qml";
+            return "qrc:/qml/AudioEditor/Main.qml";
         }
 
         QString modeName() const override {
-            return "editor";
+            return "audioeditor";
+        }
+
+        void handleArguments(const QStringList& args) override {
+            // Audio editor specific: load files into waveform view
+            for (const QString& file : args) {
+                if (file.endsWith(".wav") || file.endsWith(".flac") ||
+                    file.endsWith(".mp3") || file.endsWith(".ogg")) {
+                    // Emit signal or call method to load file
+                    }
+            }
         }
     };
 
+    // Video Editor - Timeline editing, compositing, color grading
+    // Use case: Cutting videos, adding effects, color correction
+    class VideoEditorPlugin : public BasePlugin {
+    public:
+        QString qmlEntryPoint() const override {
+            return "qrc:/qml/VideoEditor/Main.qml";
+        }
+
+        QString modeName() const override {
+            return "videoeditor";
+        }
+
+        void handleArguments(const QStringList& args) override {
+            // Video editor specific: import media to timeline
+            for (const QString& file : args) {
+                if (file.endsWith(".mp4") || file.endsWith(".mkv") ||
+                    file.endsWith(".mov") || file.endsWith(".avi")) {
+                    // Add to timeline
+                    }
+            }
+        }
+    };
+
+    // DAW - Digital Audio Workstation
+    // Multi-track recording, mixing, notation, MIDI
+    // Use case: Music production, composition, arranging
+    class DAWPlugin : public BasePlugin {
+    public:
+        QString qmlEntryPoint() const override {
+            return "qrc:/qml/DAW/Main.qml";
+        }
+
+        QString modeName() const override {
+            return "daw";
+        }
+
+        void handleArguments(const QStringList& args) override {
+            // DAW specific: create tracks from files or import projects
+            for (const QString& file : args) {
+                if (file.endsWith(".xml") || file.endsWith(".musicxml")) {
+                    // Import as notation track
+                } else if (file.endsWith(".mid") || file.endsWith(".midi")) {
+                    // Import as MIDI track
+                } else if (file.endsWith(".wav") || file.endsWith(".flac")) {
+                    // Import as audio track
+                }
+            }
+        }
+    };
+
+    // Disc Burner - CD/DVD/BD burning and ripping
     class DiscBurnerPlugin : public BasePlugin {
     public:
         QString qmlEntryPoint() const override {
@@ -456,6 +610,7 @@ namespace Aegis {
         }
     };
 
+    // DJ Mixer - Live performance mixing
     class DJMixPlugin : public BasePlugin {
     public:
         QString qmlEntryPoint() const override {
@@ -467,6 +622,7 @@ namespace Aegis {
         }
     };
 
+    // Karaoke Player - Hosting and playback
     class KaraokePlugin : public BasePlugin {
     public:
         QString qmlEntryPoint() const override {
@@ -475,6 +631,18 @@ namespace Aegis {
 
         QString modeName() const override {
             return "karaoke";
+        }
+    };
+
+    // Label Maker - Disc label design
+    class LabelMakerPlugin : public BasePlugin {
+    public:
+        QString qmlEntryPoint() const override {
+            return "qrc:/qml/LabelMaker/Main.qml";
+        }
+
+        QString modeName() const override {
+            return "labelmaker";
         }
     };
 
@@ -494,6 +662,10 @@ namespace Aegis {
             return (it != m_plugins.end()) ? it->get() : nullptr;
         }
 
+        QStringList availableModes() const {
+            return m_plugins.keys();
+        }
+
     private:
         QHash<QString, std::unique_ptr<PluginInterface>> m_plugins;
     };
@@ -510,12 +682,10 @@ public:
     }
 
     int run() {
-        // Setup application
         ApplicationInitializer::setupApplication(m_app);
         ApplicationInitializer::setupEnvironment();
 
         #ifdef KF6_VERSION
-        // Initialize KDE About Data
         KAboutData about("aegis",
                          i18n("Aegis Multimedia Suite"),
                          "1.0.0",
@@ -527,14 +697,11 @@ public:
                         "team@aegis.example.com");
         KAboutData::setApplicationData(about);
 
-        // KDE DBus service
         KDBusService service(KDBusService::Unique);
         #endif
 
-        // Parse command line
         auto args = CommandLineHandler::parse(m_app.arguments());
 
-        // Handle special cases
         if (args.helpRequested) {
             showHelp(args.mode);
             return 0;
@@ -545,20 +712,16 @@ public:
             return 0;
         }
 
-        // Check if we're the primary instance
         auto &appManager = ApplicationManager::instance();
         if (!appManager.isPrimaryInstance() && !args.files.isEmpty()) {
-            // Forward to primary instance and exit
             if (appManager.sendToPrimary("open", args.files)) {
                 qDebug() << "Files forwarded to primary instance";
                 return 0;
             }
         }
 
-        // Initialize plugin system
         initializePlugins();
 
-        // Get the appropriate plugin for the mode
         QString modeKey = modeToString(args.mode);
         auto *plugin = Aegis::PluginRegistry::global().getPlugin(modeKey);
         if (!plugin) {
@@ -567,29 +730,25 @@ public:
             return 1;
         }
 
-        // Setup application context
         Aegis::AppContext context;
         context.engine = m_engine.get();
         context.arguments = args.files;
         context.config = args.options;
+        context.mode = args.mode;
 
-        // Initialize plugin
         if (!plugin->initialize(context)) {
             qCritical() << "Failed to initialize plugin:" << plugin->modeName();
             return 1;
         }
 
-        // Get QML entry point
         QString qmlPath = plugin->qmlEntryPoint();
         if (qmlPath.isEmpty()) {
             qCritical() << "No QML entry point defined for plugin:" << plugin->modeName();
             return 1;
         }
 
-        // Load QML
         QUrl qmlUrl(qmlPath);
         if (qmlUrl.scheme().isEmpty()) {
-            // Assume it's a file path
             qmlUrl = QUrl::fromLocalFile(qmlPath);
         }
 
@@ -608,28 +767,27 @@ public:
             }
         }
 
-        // Handle files passed via command line
         if (!args.files.isEmpty()) {
             plugin->handleArguments(args.files);
         }
 
-        // Connect cleanup
         QObject::connect(&m_app, &QApplication::aboutToQuit, [plugin]() {
             plugin->shutdown();
         });
 
-        // Run event loop
         return m_app.exec();
     }
 
 private:
     void initializePlugins() {
-        // Register all available plugins
         Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::MediaPlayerPlugin>());
-        Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::EditorPlugin>());
+        Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::AudioEditorPlugin>());
+        Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::VideoEditorPlugin>());
+        Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::DAWPlugin>());
         Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::DiscBurnerPlugin>());
         Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::DJMixPlugin>());
         Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::KaraokePlugin>());
+        Aegis::PluginRegistry::global().registerPlugin(std::make_unique<Aegis::LabelMakerPlugin>());
     }
 
     void showHelp(Aegis::AppMode mode) {
@@ -637,19 +795,64 @@ private:
         out << "Aegis Multimedia Suite - Version " << QCoreApplication::applicationVersion() << "\n\n";
 
         switch (mode) {
-            case Aegis::AppMode::SoundEditor:
-                out << "Usage: aegis --editor [options] [files...]\n\n"
-                << "Audio editing and mastering workstation\n\n"
+            case Aegis::AppMode::AudioEditor:
+                out << "Usage: aegis --audioeditor [options] [audio-files...]\n\n"
+                << "Waveform audio editor for mastering and restoration\n\n"
+                << "Features:\n"
+                << "  - Waveform editing with spectral view\n"
+                << "  - Non-destructive effects chain\n"
+                << "  - Batch processing\n"
+                << "  - Noise reduction and restoration tools\n\n"
                 << "Options:\n"
                 << "  --help, -h          Show this help message\n"
                 << "  --version, -v       Show version information\n"
                 << "  --new               Start new project\n"
                 << "  --export FORMAT     Export format (wav, flac, mp3, ogg)\n"
-                << "  --sample-rate RATE  Set project sample rate (default: 44100)\n"
+                << "  --sample-rate RATE  Set project sample rate\n"
                 << "  --bit-depth DEPTH   Set project bit depth (16, 24, 32)\n\n"
                 << "Examples:\n"
-                << "  aegis --editor song.wav              Edit audio file\n"
-                << "  aegis --editor --new --sample-rate=48000  Start new 48kHz project\n";
+                << "  aegis --audioeditor podcast.wav    Edit podcast\n"
+                << "  aegis --audioeditor --new          Start new project\n";
+                break;
+
+            case Aegis::AppMode::VideoEditor:
+                out << "Usage: aegis --videoeditor [options] [video-files...]\n\n"
+                << "Video editing and compositing workstation\n\n"
+                << "Features:\n"
+                << "  - Multi-track timeline editing\n"
+                << "  - Color grading and correction\n"
+                << "  - Video effects and transitions\n"
+                << "  - Audio mixing integrated\n\n"
+                << "Options:\n"
+                << "  --help, -h          Show this help message\n"
+                << "  --version, -v       Show version information\n"
+                << "  --new               Start new project\n"
+                << "  --resolution WxH    Set project resolution\n"
+                << "  --fps FPS           Set project frame rate\n\n"
+                << "Examples:\n"
+                << "  aegis --videoeditor clip.mp4       Edit video\n"
+                << "  aegis --videoeditor --new --resolution=1920x1080  Start HD project\n";
+                break;
+
+            case Aegis::AppMode::DAW:
+                out << "Usage: aegis --daw [options] [files...]\n\n"
+                << "Digital Audio Workstation for music production\n\n"
+                << "Features:\n"
+                << "  - Multi-track recording and mixing\n"
+                << "  - Music notation and scoring\n"
+                << "  - MIDI sequencing and editing\n"
+                << "  - Virtual instruments and effects\n\n"
+                << "Options:\n"
+                << "  --help, -h          Show this help message\n"
+                << "  --version, -v       Show version information\n"
+                << "  --new               Start new project\n"
+                << "  --template TYPE     Project template (empty, pop, rock, orchestral)\n"
+                << "  --bpm BPM           Set tempo\n"
+                << "  --key KEY           Set key signature\n\n"
+                << "Examples:\n"
+                << "  aegis --daw song.xml               Open notation file\n"
+                << "  aegis --daw --new --template=orchestral  Start orchestral project\n"
+                << "  aegis --daw --bpm=140 track.wav    Import audio at 140 BPM\n";
                 break;
 
             case Aegis::AppMode::DiscBurner:
@@ -659,15 +862,9 @@ private:
                 << "  --help, -h          Show this help message\n"
                 << "  --version, -v       Show version information\n"
                 << "  --list-drives       List available optical drives\n"
-                << "  --rip [DIR]         Rip disc to directory (default: current)\n"
+                << "  --rip [DIR]         Rip disc to directory\n"
                 << "  --burn              Burn files/ISO to disc\n"
-                << "  --image FILE        Create ISO image from files\n"
-                << "  --verify            Verify after burning\n"
-                << "  --speed SPEED       Burning speed (1x, 2x, 4x, 8x, 16x, max)\n\n"
-                << "Examples:\n"
-                << "  aegis --discburner --list-drives          List drives\n"
-                << "  aegis --discburner /dev/sr0 --rip ~/Music Rip CD to Music directory\n"
-                << "  aegis --discburner concert.iso --burn     Burn ISO to disc\n";
+                << "  --verify            Verify after burning\n";
                 break;
 
             case Aegis::AppMode::DJMixer:
@@ -676,14 +873,8 @@ private:
                 << "Options:\n"
                 << "  --help, -h          Show this help message\n"
                 << "  --version, -v       Show version information\n"
-                << "  --bpm BPM           Set master BPM (default: 128)\n"
-                << "  --key KEY           Set master key (A-G)\n"
-                << "  --record [FILE]     Record mix to file\n"
-                << "  --controller DEV    Use MIDI controller device\n"
-                << "  --sync              Enable beat sync\n\n"
-                << "Examples:\n"
-                << "  aegis --djmix track1.mp3 track2.mp3  Load two tracks\n"
-                << "  aegis --djmix --bpm=140 --record=mix.mp3  Record 140BPM mix\n";
+                << "  --bpm BPM           Set master BPM\n"
+                << "  --record [FILE]     Record mix to file\n";
                 break;
 
             case Aegis::AppMode::KaraokePlayer:
@@ -692,17 +883,8 @@ private:
                 << "Options:\n"
                 << "  --help, -h          Show this help message\n"
                 << "  --version, -v       Show version information\n"
-                << "  --rotation FILE     Load rotation from file\n"
                 << "  --database FILE     Use alternative song database\n"
-                << "  --scan DIR          Scan directory for karaoke files\n"
-                << "  --openkj            Import OpenKJ database\n"
-                << "  --record [FILE]     Record performance to file\n"
-                << "  --key CHANGE        Default key change (+2, -1, 0)\n"
-                << "  --fullscreen        Start in fullscreen mode\n\n"
-                << "Examples:\n"
-                << "  aegis --karaoke --openkj                Import OpenKJ library\n"
-                << "  aegis --karaoke song1.cdg song2.zip     Queue karaoke songs\n"
-                << "  aegis --karaoke --scan ~/Karaoke        Scan karaoke library\n";
+                << "  --fullscreen        Start in fullscreen mode\n";
                 break;
 
             case Aegis::AppMode::MediaPlayer:
@@ -713,26 +895,20 @@ private:
                 << "  --help, -h          Show this help message\n"
                 << "  --version, -v       Show version information\n"
                 << "  --play              Start playback immediately\n"
-                << "  --pause             Start in paused state\n"
-                << "  --fullscreen, -f    Start in fullscreen mode\n"
-                << "  --playlist FILE     Load playlist file\n"
-                << "  --shuffle           Shuffle playlist\n"
-                << "  --repeat [one|all|none]  Set repeat mode\n"
-                << "  --audio-device DEV  Use specific audio device\n"
-                << "  --video-output DEV  Use specific video output\n"
-                << "  --visualization TYPE  Enable visualization (spectrum, waves)\n\n"
+                << "  --fullscreen, -f    Start in fullscreen mode\n\n"
                 << "Mode Selection:\n"
                 << "  --mediaplayer       Media player mode (default)\n"
-                << "  --editor            Audio editor mode\n"
+                << "  --audioeditor       Audio waveform editor\n"
+                << "  --videoeditor       Video timeline editor\n"
+                << "  --daw               Digital Audio Workstation\n"
                 << "  --discburner        Disc burning mode\n"
                 << "  --djmix             DJ mixing mode\n"
                 << "  --karaoke           Karaoke player mode\n\n"
                 << "Examples:\n"
-                << "  aegis music.mp3                    Play audio file\n"
-                << "  aegis video.mp4 --fullscreen       Play video fullscreen\n"
-                << "  aegis https://stream.url --play    Stream internet radio\n"
-                << "  aegis --playlist=party.m3u --shuffle Shuffled playlist\n"
-                << "  aegis --editor song.wav            Edit audio file\n";
+                << "  aegis music.mp3                    Play audio\n"
+                << "  aegis --audioeditor song.wav       Edit audio\n"
+                << "  aegis --videoeditor video.mp4      Edit video\n"
+                << "  aegis --daw project.xml            Music production\n";
                 break;
         }
 
@@ -756,7 +932,9 @@ private:
 
     QString modeToString(Aegis::AppMode mode) {
         switch (mode) {
-            case Aegis::AppMode::SoundEditor: return "editor";
+            case Aegis::AppMode::AudioEditor: return "audioeditor";
+            case Aegis::AppMode::VideoEditor: return "videoeditor";
+            case Aegis::AppMode::DAW: return "daw";
             case Aegis::AppMode::DiscBurner: return "discburner";
             case Aegis::AppMode::DJMixer: return "djmix";
             case Aegis::AppMode::KaraokePlayer: return "karaoke";
@@ -771,13 +949,11 @@ private:
 };
 
 int main(int argc, char *argv[]) {
-    // Set organization and application names early for QSettings
     QCoreApplication::setOrganizationName("Aegis");
     QCoreApplication::setOrganizationDomain("org.aegis");
     QCoreApplication::setApplicationName("aegis");
 
     #ifdef KF6_VERSION
-    // Enable KDE integration
     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
     KLocalizedString::setApplicationDomain("aegis");
     #endif
