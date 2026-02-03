@@ -195,9 +195,32 @@ ApplicationWindow {
         property string defaultTemplate: "empty"
     }
 
+    // Mapping for editor pages (added music notation)
+    property var editorPages: ({
+        "launcher": "qrc:/qml/ui_launcher.qml",
+        "player": "qrc:/qml/ui_player.qml",
+        "audioeditor": "qrc:/qml/ui_audioeditor.qml",
+        "videoeditor": "qrc:/qml/ui_videoeditor.qml",
+        "discburner": "qrc:/qml/ui_discburner.qml",
+        "djmix": "qrc:/qml/ui_djmixer.qml",
+        "karaoke": "qrc:/qml/ui_karaoke.qml",
+        "disc_labelmaker": "qrc:/qml/ui_disc_labelmaker.qml",
+        "converter": "qrc:/qml/ui_converter.qml",
+        "middleware": "qrc:/qml/ui_middleware.qml",
+        "modtracker": "qrc:/qml/ui_modtracker.qml",
+        "musicnotation": "qrc:/qml/ui_musicnotation_editor.qml"
+    })
+
+    Loader {
+        id: editorLoader
+        anchors.fill: parent
+        source: editorPages[currentMode] ? editorPages[currentMode] : "qrc:/qml/ui_launcher.qml"
+    }
+
     // ============================================
     // 3. INITIALIZATION SYSTEM
     // ============================================
+
 
     Component.onCompleted: {
         console.log("🚀 Aegis Media Suite v2.1.1 Initializing...")

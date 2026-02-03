@@ -48,7 +48,7 @@ ApplicationWindow {
         property var recentFiles: []
         property var recentPlaylists: []
         property var recentProjects: []
-        property var favoriteApps: ["player", "converter", "middleware", "audioeditor", "burner"]
+        property var favoriteApps: ["player", "converter", "middleware", "audioeditor", "burner", "musicnotation"]
         property bool showWelcome: true
         property string lastUsedApp: "player"
         property var appUsageCount: ({})
