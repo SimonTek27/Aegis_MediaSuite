@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Aegis Media Player
+GenericName=Media Player
+Comment=Audio player with CD ripping and DJ mixing features
+Exec=aegis %U
+Icon=aegis
+Terminal=false
+Categories=AudioVideo;Player;Qt;KDE;
+MimeType=audio/mpeg;audio/x-wav;audio/flac;audio/ogg;audio/x-flac;audio/x-vorbis+ogg;
+StartupNotify=true
+X-KDE-StartupNotify=true
+X-KDE-Protocols=file,http,https

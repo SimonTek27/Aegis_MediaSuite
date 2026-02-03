@@ -1,0 +1,6 @@
+name=Aegis Media Suite
+desc=Control Aegis media player and library
+version=1.0
+category=misc
+depends=0.9
+os_support=*-linux
