@@ -28,6 +28,7 @@ Core ideas:
 | **Modtracker** | Compose music using tracker |
 | **DAW** | DAW app |
 | **Middleware** | Middleware app for developers |
+| **Music Notation** | Music Notation |
 | **Converter** | A/V converter |
 | **Library** | SQLite database, TagLib‑based metadata, smart playlists and folder watching |
 | **Streaming** | integration with yt‑dlp, internet radio, IPTV/M3U and capture devices via **Media Player** |
