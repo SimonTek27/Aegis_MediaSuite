@@ -326,7 +326,7 @@ namespace Aegis {
 
                                                                  m_shaderProgram->bind();
                                                                  glActiveTexture(GL_TEXTURE0);
-                                                                 input->texture().bind();
+                                                                 glBindTexture(GL_TEXTURE_2D, input->texture());
                                                                  m_shaderProgram->setUniformValue("inputTexture", 0);
 
                                                                  m_shaderProgram->setUniformValue("lift", QVector3D(m_lift[0], m_lift[1], m_lift[2]));

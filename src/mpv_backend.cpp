@@ -45,7 +45,8 @@ namespace Aegis {
     }
 
     void MpvBackend::mpvWakeup(void* ctx) {
-        QMetaObject::invokeMethod(static_cast<MpvBackend*>(ctx), &MpvBackend::handleEvent, Qt::QueuedConnection);
+        auto *obj = static_cast<MpvBackend *>(ctx);
+        QMetaObject::invokeMethod(obj, "handleEvent", Qt::QueuedConnection);
     }
 
     void MpvBackend::handleEvent() {
@@ -142,7 +143,7 @@ namespace Aegis {
         }
     }
 
-    bool MpvBackendFactory::isAvailable() {
+    bool MpvBackendFactory::isAvailable() const {
         // Check if libmpv is available by attempting to create a handle
         mpv_handle* test = mpv_create();
         if (test) {

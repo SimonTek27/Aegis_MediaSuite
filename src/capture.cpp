@@ -134,8 +134,10 @@ void Capture::startDeviceRecording(const QString &device) {
         outPath
     };
 
-    connect(m_ffmpeg, QOverload<int>::of(&QProcess::finished),
-            this, &Capture::onFfmpegFinished);
+    connect(m_ffmpeg,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this,
+            &Capture::onFfmpegFinished);
     m_ffmpeg->start("ffmpeg", args);
     m_recording = true;
     emit recordingChanged();
@@ -152,7 +154,8 @@ void Capture::stopRecording() {
     emit recordingChanged();
 }
 
-void Capture::onFfmpegFinished(int code) {
+void Capture::onFfmpegFinished(int code, QProcess::ExitStatus)
+{
     m_recording = false;
     emit recordingChanged();
     if (m_ffmpeg) {

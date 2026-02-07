@@ -162,7 +162,8 @@ namespace Aegis {
                                              m_routingTable.remove(name);
 
                                              // Remove from other routes
-                                             for (auto& [source, destinations] : m_routingTable) {
+                                             for (auto it = m_routingTable.begin(); it != m_routingTable.end(); ++it) {
+                                                 auto &destinations = it.value();
                                                  destinations.removeAll(name);
                                              }
 
@@ -225,20 +226,22 @@ namespace Aegis {
                                                                                       return false;
                                                                                   }
 
-                                                                                  void AudioMiddleware::startAll() {
-                                                                                      for (auto& [name, endpoint] : m_endpoints) {
-                                                                                          endpoint->initialize();
-                                                                                      }
-                                                                                      m_active = true;
-                                                                                      emit activeChanged();
-                                                                                  }
+                                                                                   void AudioMiddleware::startAll() {
+                                                                                       for (auto it = m_endpoints.begin(); it != m_endpoints.end(); ++it) {
+                                                                                           auto &endpoint = it.value();
+                                                                                           endpoint->initialize();
+                                                                                       }
+                                                                                       m_active = true;
+                                                                                       emit activeChanged();
+                                                                                   }
 
-                                                                                  void AudioMiddleware::stopAll() {
-                                                                                      for (auto& [name, endpoint] : m_endpoints) {
-                                                                                          endpoint->shutdown();
-                                                                                      }
-                                                                                      m_active = false;
-                                                                                      emit activeChanged();
-                                                                                  }
+                                                                                   void AudioMiddleware::stopAll() {
+                                                                                       for (auto it = m_endpoints.begin(); it != m_endpoints.end(); ++it) {
+                                                                                           auto &endpoint = it.value();
+                                                                                           endpoint->shutdown();
+                                                                                       }
+                                                                                       m_active = false;
+                                                                                       emit activeChanged();
+                                                                                   }
 
 } // namespace Aegis

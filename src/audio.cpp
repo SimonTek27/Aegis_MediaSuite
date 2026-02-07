@@ -1,5 +1,6 @@
 // audio.cpp
 #include "audio.h"
+#include "audio_output.h"
 #include <cmath>
 #include <algorithm>
 #include <fftw3.h>
@@ -24,7 +25,8 @@ namespace Aegis {
     }
 
     void EqualizerProcessor::setGains(const QVector<double>& gains) {
-        for (int i = 0; i < std::min(gains.size(), static_cast<int>(Bands)); ++i) {
+        int limit = std::min<int>(static_cast<int>(gains.size()), static_cast<int>(Bands));
+        for (int i = 0; i < limit; ++i) {
             setGain(i, gains[i]);
         }
     }
@@ -132,10 +134,18 @@ namespace Aegis {
         if (m_keySemitones.load() != 0) {
             std::shared_lock<std::shared_mutex> lock(m_stretcherMutex);
             if (m_stretcher) {
-                m_stretcher->process(data, frames, false);
+                const int channels = 2;
+                const float *in[channels];
+                float *out[channels];
+                for (int c = 0; c < channels; ++c) {
+                    in[c]  = data + c;
+                    out[c] = data + c;
+                }
+
+                m_stretcher->process(in, static_cast<size_t>(frames), false);
                 size_t available = m_stretcher->available();
                 if (available >= static_cast<size_t>(frames)) {
-                    m_stretcher->retrieve(data, frames);
+                    m_stretcher->retrieve(out, static_cast<size_t>(frames));
                 }
             }
         }
@@ -360,7 +370,7 @@ namespace Aegis {
     void AudioEngine::setKaraokeEnabled(bool enabled) {
         m_karaokeEnabled.store(enabled);
         m_karaoke.setEnabled(enabled);
-        emit karaokeChanged();
+        emit karaokeChanged(enabled);
     }
 
     bool AudioEngine::isTrackerFile(const QString& path) const {
@@ -492,7 +502,7 @@ namespace Aegis {
         emit loudnessUpdated();
     }
 
-    void EburStateDeleter::operator()(ebur128_state* p) const {
+    void AudioEngine::EburStateDeleter::operator()(ebur128_state* p) const {
         if (p) ebur128_destroy(&p);
     }
 

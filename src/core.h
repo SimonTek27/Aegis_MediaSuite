@@ -17,17 +17,59 @@ namespace Aegis {
     class VideoEngine;
     class Library;
 
-    /**
-     * @brief Playback state enumeration
-     *
-     * Represents the current state of media playback.
-     * Used for state machines and UI feedback.
-     */
+    // Backend types live here to keep things centralized
+
+    struct TrackMetadata {
+        QString title;
+        QString artist;
+        QString album;
+        QString genre;
+        int year = 0;
+        int trackNumber = 0;
+    };
+
     enum class PlaybackState {
-        Stopped,    ///< No media is loaded or playing
-        Playing,    ///< Media is actively playing
-        Paused,     ///< Playback is paused
-        Buffering   ///< Media is buffering data
+        Stopped,
+        Playing,
+        Paused,
+        Buffering
+    };
+
+    class AudioBackend : public QObject {
+        Q_OBJECT
+    public:
+        explicit AudioBackend(QObject *parent = nullptr) : QObject(parent) {}
+        ~AudioBackend() override = default;
+
+        virtual void load(const QString &path) = 0;
+        virtual void play() = 0;
+        virtual void pause() = 0;
+        virtual void stop() = 0;
+        virtual void seek(double position) = 0;
+        virtual void setVolume(double volume) = 0;
+
+        virtual PlaybackState state() const = 0;
+        virtual double position() const = 0;
+        virtual double duration() const = 0;
+        virtual TrackMetadata metadata() const = 0;
+        virtual bool hasVideo() const = 0;
+
+        virtual void setAudioCallback(
+            std::function<void(const QByteArray &, int)> cb) = 0;
+
+    signals:
+        void durationChanged(double);
+        void finished();
+        void stateChanged(PlaybackState);
+        void metadataChanged(const TrackMetadata &);
+    };
+
+    class BackendFactory {
+    public:
+        virtual ~BackendFactory() = default;
+        virtual QString name() const = 0;
+        virtual std::unique_ptr<AudioBackend> create(QObject *parent) const = 0;
+        virtual bool isAvailable() const = 0;
     };
 
     /**

@@ -1,203 +1,594 @@
 // audio_daw.h - Digital Audio Workstation Engine with Integrated Notation
 // Part of Aegis Multimedia Suite - Pillar 1 (Audio)
-// Unified architecture: Audio, MIDI, and Notation clips coexist in same timeline
 
 #pragma once
 
-#include "audio.h"
-#include "audio_effects.h"
-#include "audio_output.h"
-#include "music_notation.h"  // New: notation data model
 #include <QObject>
-#include <QString>
 #include <QVector>
 #include <QMap>
 #include <QMutex>
 #include <QReadWriteLock>
-#include <QUndoStack>
+#include <QString>
+#include <QColor>
+#include <QFont>
+#include <QPainter>
+#include <QRectF>
+#include <QXmlStreamReader>
+#include <QXmlStreamWriter>
 #include <memory>
-#include <functional>
 #include <atomic>
-#include <optional>
+#include <cmath>
+#include <functional>
+#include <algorithm>
 
 // Forward declarations
-class QTimer;
+class QFileInfo;
 
 namespace Aegis {
 
+    // Forward declarations for tracker integration
+    class ModTrackerClip;
+
     // =============================================================================
-    // Tempo and Time Signature Map (Unified for all clip types)
+    // Core Types (Unified Across Audio/MIDI/Notation)
     // =============================================================================
 
-    struct TempoMap {
-        struct TempoChange {
-            double beatPosition;  // In quarter notes from start
-            double bpm;
-            bool rampToNext = false;  // Gradual tempo change
-        };
+    enum class ClipType { Audio, MIDI, Notation, Tracker, Automation };
+    enum class TransportState { Stopped, Playing, Paused, Recording };
 
-        struct TimeSignatureChange {
-            double beatPosition;
-            int numerator = 4;
-            int denominator = 4;
-        };
+    // =============================================================================
+    // Music Theory Types
+    // =============================================================================
 
+    enum class PitchClass {
+        C = 0, CSharp, D, DSharp, E, F, FSharp, G, GSharp, A, ASharp, B
+    };
+
+    enum class Accidental {
+        None, Natural, Sharp, Flat, DoubleSharp, DoubleFlat,
+        QuarterToneSharp, QuarterToneFlat
+    };
+
+    enum class ClefType {
+        Treble, Bass, Alto, Tenor, Soprano, MezzoSoprano,
+        Baritone, BaritoneC, FrenchViolin, Percussion, Tab
+    };
+
+    enum class KeySignature {
+        C_Major = 0, G_Major, D_Major, A_Major, E_Major, B_Major, FSharp_Major,
+        CSharp_Major, F_Major, Bb_Major, Eb_Major, Ab_Major, Db_Major, Gb_Major, Cb_Major
+    };
+
+    enum class TimeSignatureType {
+        Simple, Compound, Irrational, CommonTime, CutTime
+    };
+
+    enum class DurationType {
+        Maxima = 0, Long, Breve, Whole, Half, Quarter, Eighth,
+        Sixteenth, ThirtySecond, SixtyFourth, HundredTwentyEighth, TwoHundredFiftySixth,
+        DoubleWhole = Breve
+    };
+
+    enum class NoteHeadType {
+        Normal, Cross, Diamond, Triangle, Slash, XCircle, Do, Re, Mi,
+        Fa, So, La, Ti, Rectangle, Oval
+    };
+
+    enum class Articulation {
+        None, Staccato, Tenuto, Accent, Marcato, Staccatissimo,
+        Fermata, FermataShort, FermataLong, BreathMark, Caesura
+    };
+
+    enum class Ornament {
+        None, Trill, Turn, Mordent, InvertedMordent, Pralltriller,
+        UpPrall, DownPrall, LinePrall, Shake, Schleifer
+    };
+
+    enum class TieType { None, Start, Stop, Continue };
+    enum class SlurType { None, Start, Stop };
+
+    enum class BarlineType {
+        Single, Double, EndRepeat, BeginRepeat, EndBeginRepeat,
+        Final, Dashed, Dotted, Tick, Short
+    };
+
+    enum class Waveform { Sine, Square, Saw, Triangle, Noise, Sample };
+
+    // =============================================================================
+    // Duration
+    // =============================================================================
+
+    struct Duration {
+        DurationType type = DurationType::Quarter;
+        int dots = 0;
+        int numerator = 1;      // For tuplets
+        int denominator = 1;    // For tuplets
+
+        double toQuarterNotes() const;
+        double toSeconds(double tempoBpm) const;
+        QString toString() const;
+        static Duration fromString(const QString& str);
+        bool isTuplet() const { return numerator != 1 || denominator != 1; }
+        bool operator==(const Duration& other) const;
+    };
+
+    // =============================================================================
+    // Pitch
+    // =============================================================================
+
+    struct Pitch {
+        int midiNote = 60;
+        PitchClass pitchClass = PitchClass::C;
+        int octave = 4;
+        Accidental accidental = Accidental::Natural;
+        bool showAccidental = false;
+
+        Pitch() = default;
+        explicit Pitch(int midi) : midiNote(midi) { fromMidi(midi); }
+        Pitch(PitchClass pc, int oct, Accidental acc = Accidental::Natural)
+        : pitchClass(pc), octave(oct), accidental(acc) { toMidi(); }
+
+        void fromMidi(int midi);
+        void toMidi();
+        int compare(const Pitch& other) const;
+        QString toString() const;
+        static Pitch fromString(const QString& str);
+        double frequency() const { return 440.0 * std::pow(2.0, (midiNote - 69) / 12.0); }
+
+        bool operator==(const Pitch& other) const { return midiNote == other.midiNote; }
+        bool operator<(const Pitch& other) const { return midiNote < other.midiNote; }
+    };
+
+    // =============================================================================
+    // Time Signature
+    // =============================================================================
+
+    struct TimeSignature {
+        int numerator = 4;
+        int denominator = 4;
+        TimeSignatureType type = TimeSignatureType::Simple;
+
+        double beatsPerMeasure() const { return numerator; }
+        double beatUnit() const { return 4.0 / denominator; }
+        bool isCompound() const { return type == TimeSignatureType::Compound; }
+        QString toString() const { return QString("%1/%2").arg(numerator).arg(denominator); }
+    };
+
+    // =============================================================================
+    // Key Signature
+    // =============================================================================
+
+    struct KeySig {
+        KeySignature key = KeySignature::C_Major;
+        bool showNaturals = false;
+
+        int accidentals() const;
+        bool isSharpKey() const;
+        bool isFlatKey() const;
+        Accidental accidentalForPitch(PitchClass pc) const;
+    };
+
+    // =============================================================================
+    // Clef
+    // =============================================================================
+
+    struct Clef {
+        ClefType type = ClefType::Treble;
+        int staffLine = 2;
+        int octaveChange = 0;
+
+        int pitchOffset() const;
+        QString toString() const;
+    };
+
+    // =============================================================================
+    // Barline
+    // =============================================================================
+
+    struct Barline {
+        BarlineType type = BarlineType::Single;
+        int repeatCount = 2;
+        QString voltaText;
+    };
+
+    // =============================================================================
+    // Lyric
+    // =============================================================================
+
+    struct Lyric {
+        QString text;
+        int verse = 0;
+        enum Syllabic { Single, Begin, Middle, End } syllabic = Single;
+        bool melisma = false;
+    };
+
+    // =============================================================================
+    // Note
+    // =============================================================================
+
+    class Measure;
+
+    struct Note {
+        Pitch pitch;
+        Duration duration;
+        NoteHeadType headType = NoteHeadType::Normal;
+        bool isRest = false;
+        bool isChord = false;
+        int voice = 0;
+        int velocity = 80;
+        bool stemUp = true;
+        int staffLine = 0;
+        TieType tie = TieType::None;
+        QVector<Articulation> articulations;
+        Ornament ornament = Ornament::None;
+        QVector<SlurType> slurs;
+        double playbackDurationMultiplier = 1.0;
+        Measure* measure = nullptr;
+        int tickPosition = 0;
+        QVector<Pitch> chordPitches;
+        bool isGraceNote = false;
+        Duration graceDuration;
+        QVector<Lyric> lyrics;
+
+        Note() = default;
+        explicit Note(const Pitch& p, const Duration& d) : pitch(p), duration(d) {}
+
+        double playDurationTicks(double tempo) const;
+        QString toLilyPond() const;
+    };
+
+    // =============================================================================
+    // Synth Voice (Real-time Synthesis)
+    // =============================================================================
+
+    struct SynthVoice {
+        int noteId = -1;
+        Pitch pitch;
+        double velocity = 0.8;
+        double startTime = 0.0;
+        double duration = 0.0;
+        double attack = 0.01;
+        double decay = 0.1;
+        double sustain = 0.7;
+        double releaseTime = 0.2;
+        Waveform waveform = Waveform::Triangle;
+        double phase = 0.0;
+        double currentTime = 0.0;
+        bool isActive = false;
+        bool isReleasing = false;
+        double releaseStartLevel = 0.0;
+        double sampleRate = 48000.0;
+
+        void start(const Pitch& p, double vel, double dur, double now);
+        void release();
+        double envelope() const;
+        double nextSample();
+    };
+
+    // =============================================================================
+    // Tempo Map
+    // =============================================================================
+
+    struct TempoChange {
+        double beatPosition;
+        double bpm;
+        bool ramp = false;
+    };
+
+    class TempoMap {
+    public:
         QVector<TempoChange> tempoChanges;
-        QVector<TimeSignatureChange> timeSigChanges;
-
-        // Default tempo if no changes
         double defaultBpm = 120.0;
+        int ticksPerQuarter = 480;
 
-        // Time conversions
         double beatsToSeconds(double beats) const;
         double secondsToBeats(double seconds) const;
         double bpmAtBeat(double beat) const;
-        double bpmAtTime(double seconds) const;
-
-        // Beat/bar conversion
-        struct BarBeat {
-            int bar;
-            int beat;
-            double fractionalBeat;
-        };
-        BarBeat beatsToBarBeat(double beats) const;
-        double barBeatToBeats(int bar, int beat, double fraction = 0.0) const;
+        int timeToTick(double seconds) const;
+        double tickToTime(int tick) const;
 
         void addTempoChange(double beat, double bpm, bool ramp = false);
-        void addTimeSignature(double beat, int num, int den);
-
-        void clear() {
-            tempoChanges.clear();
-            timeSigChanges.clear();
-            defaultBpm = 120.0;
-        }
+        void clear();
     };
 
     // =============================================================================
-    // Transport Control (Unified for Audio/MIDI/Notation)
+    // Note Event (Shared Between MIDI and Notation)
     // =============================================================================
 
-    enum class TransportState {
-        Stopped,
-        Playing,
-        Paused,
-        Recording
+    struct NoteEvent {
+        enum Type { NoteOn, NoteOff, ControlChange, PitchBend } type;
+        double time;
+        int channel = 0;
+        int note = 0;
+        int velocity = 0;
+        Pitch pitch;
+        Duration duration;
+        bool fromNotation = false;
+        int voice = 0;
     };
 
-    class DAWTransport : public QObject {
+    // =============================================================================
+    // Measure
+    // =============================================================================
+
+    class Measure : public QObject {
         Q_OBJECT
-        Q_PROPERTY(TransportState state READ state NOTIFY stateChanged)
-        Q_PROPERTY(double position READ position WRITE setPosition NOTIFY positionChanged)
-        Q_PROPERTY(double tempo READ tempo WRITE setTempo NOTIFY tempoChanged)
-        Q_PROPERTY(bool looping READ isLooping WRITE setLooping NOTIFY loopingChanged)
-        Q_PROPERTY(double loopStart READ loopStart WRITE setLoopStart NOTIFY loopChanged)
-        Q_PROPERTY(double loopEnd READ loopEnd WRITE setLoopEnd NOTIFY loopChanged)
-
     public:
-        explicit DAWTransport(QObject* parent = nullptr);
+        explicit Measure(int number, QObject* parent = nullptr);
 
-        // State control
-        void play();
-        void stop();
-        void pause();
-        void togglePlay();
-        void record();
+        int measureNumber() const { return m_number; }
+        int startTick() const { return m_startTick; }
+        int lengthTicks() const { return m_lengthTicks; }
+        void setStartTick(int tick) { m_startTick = tick; }
+        void setLengthTicks(int ticks) { m_lengthTicks = ticks; }
 
-        TransportState state() const { return m_state; }
+        QVector<Note> notes;
+        QVector<Clef> clefs;
+        QVector<KeySig> keySigs;
+        QVector<TimeSignature> timeSigs;
+        QVector<Barline> barlines;
 
-        // Position (in seconds, but snaps to beat grid)
-        double position() const;
-        void setPosition(double seconds);
-        void seekToBeat(double beat);
-        void seekToBarBeat(int bar, int beat, double fraction = 0.0);
+        double width = 100.0;
+        double xPosition = 0.0;
 
-        // Tempo
-        double tempo() const;
-        void setTempo(double bpm);
-        TempoMap* tempoMap() { return &m_tempoMap; }
-        const TempoMap* tempoMap() const { return &m_tempoMap; }
+        void addNote(const Note& note, int voice = 0);
+        void removeNote(int index);
+        Note* noteAtTick(int tick, int voice = 0);
+        QVector<Note*> notesInRange(int startTick, int endTick, int voice = -1);
 
-        // Looping
-        bool isLooping() const { return m_looping; }
-        void setLooping(bool loop) { m_looping = loop; emit loopingChanged(); }
-        double loopStart() const { return m_loopStart; }
-        double loopEnd() const { return m_loopEnd; }
-        void setLoopStart(double seconds);
-        void setLoopEnd(double seconds);
-        void setLoopRange(double start, double end);
-
-        // Time conversion utilities
-        double beatToTime(double beat) const;
-        double timeToBeat(double time) const;
-        double snapToGrid(double time, int subdivisions = 16) const;
-
-        // Metronome
-        bool metronomeEnabled() const { return m_metronomeEnabled; }
-        void setMetronomeEnabled(bool enabled) { m_metronomeEnabled = enabled; }
-        double metronomeVolume() const { return m_metronomeVolume; }
-        void setMetronomeVolume(double vol) { m_metronomeVolume = vol; }
-        void click();  // Trigger metronome click
-
-        // Punch-in/out for recording
-        void setPunchIn(double time) { m_punchIn = time; }
-        void setPunchOut(double time) { m_punchOut = time; }
+        int tickToPixel(int tick) const;
+        int pixelToTick(double x) const;
+        int filledTicks() const;
+        int remainingTicks() const;
+        bool isFull() const;
+        double height() const { return 80.0; }
+        double tempoAt(int tick) const;
+        double absoluteTimeAt(int tick) const;
 
     signals:
-        void stateChanged(TransportState state);
-        void positionChanged(double position);
-        void tempoChanged(double tempo);
-        void loopingChanged();
-        void loopChanged();
-        void measurePassed(int measure);
-        void beatPassed(int beat);
-        void aboutToLoop();
+        void noteAdded(const Note& note);
+        void noteRemoved(int index);
+        void modified();
 
     private:
-        TransportState m_state = TransportState::Stopped;
-        std::atomic<double> m_position{0.0};
+        int m_number = 0;
+        int m_startTick = 0;
+        int m_lengthTicks = 1920;
+    };
+
+    // =============================================================================
+    // Staff
+    // =============================================================================
+
+    class Staff : public QObject {
+        Q_OBJECT
+    public:
+        explicit Staff(const QString& name, QObject* parent = nullptr);
+
+        QString name() const { return m_name; }
+        void setName(const QString& name) { m_name = name; }
+
+        int lines() const { return m_lines; }
+        void setLines(int lines) { m_lines = lines; }
+
+        Clef defaultClef() const { return m_defaultClef; }
+        void setDefaultClef(const Clef& clef) { m_defaultClef = clef; }
+
+        int midiChannel() const { return m_midiChannel; }
+        int midiProgram() const { return m_midiProgram; }
+        void setMidiChannel(int ch) { m_midiChannel = ch; }
+        void setMidiProgram(int prog) { m_midiProgram = prog; }
+
+        int transposeChromatic() const { return m_transposeChromatic; }
+        int transposeDiatonic() const { return m_transposeDiatonic; }
+        void setTranspose(int chromatic, int diatonic);
+
+        QVector<std::unique_ptr<Measure>> measures;
+        Measure* addMeasure(int number);
+        void removeMeasure(int index);
+        Measure* measureAtTick(int tick);
+        double height() const;
+
+        double yPosition = 0.0;
+        bool showBrace = false;
+        bool showBracket = false;
+        QVector<Staff*> bracketedWith;
+
+    signals:
+        void measureAdded(Measure* measure);
+        void measureRemoved(int index);
+
+    private:
+        QString m_name;
+        int m_lines = 5;
+        Clef m_defaultClef;
+        int m_midiChannel = 0;
+        int m_midiProgram = 0;
+        int m_transposeChromatic = 0;
+        int m_transposeDiatonic = 0;
+    };
+
+    // =============================================================================
+    // Score
+    // =============================================================================
+
+    class Score : public QObject {
+        Q_OBJECT
+    public:
+        explicit Score(QObject* parent = nullptr);
+
+        QString title() const { return m_title; }
+        QString composer() const { return m_composer; }
+        QString lyricist() const { return m_lyricist; }
+        QString copyright() const { return m_copyright; }
+
+        void setTitle(const QString& title) { m_title = title; emit metadataChanged(); }
+        void setComposer(const QString& comp) { m_composer = comp; emit metadataChanged(); }
+        void setLyricist(const QString& lyr) { m_lyricist = lyr; emit metadataChanged(); }
+        void setCopyright(const QString& copy) { m_copyright = copy; emit metadataChanged(); }
+
+        QVector<std::unique_ptr<Staff>> staves;
+        Staff* addStaff(const QString& name);
+        void removeStaff(int index);
+        Staff* staffAtY(double y) const;
+
+        TimeSignature defaultTimeSignature() const { return m_defaultTimeSig; }
+        void setDefaultTimeSignature(const TimeSignature& ts) { m_defaultTimeSig = ts; }
+
+        int ticksPerQuarter() const { return m_ticksPerQuarter; }
+        void setTicksPerQuarter(int ticks) { m_ticksPerQuarter = ticks; }
+
+        double tempo() const { return m_tempo; }
+        void setTempo(double t) { m_tempo = t; }
+
+        double pageWidth() const { return m_pageWidth; }
+        double pageHeight() const { return m_pageHeight; }
+        double staffDistance() const { return m_staffDistance; }
+        void setPageSize(double w, double h) { m_pageWidth = w; m_pageHeight = h; }
+
+        int totalTicks() const;
+        Measure* measureAtTick(int tick);
+        Note* noteAtTick(int tick, int staffIdx = 0, int voice = 0);
+
+        // File I/O
+        bool loadMusicXML(const QString& path);
+        bool saveMusicXML(const QString& path) const;
+        bool loadMIDI(const QString& path);
+        bool saveMIDI(const QString& path) const;
+
+        // Audio generation
+        QByteArray renderToPCM(int sampleRate = 48000);
+
+    signals:
+        void modified();
+        void metadataChanged();
+        void structureChanged();
+
+    private:
+        QString m_title;
+        QString m_composer;
+        QString m_lyricist;
+        QString m_copyright;
+        TimeSignature m_defaultTimeSig;
+        int m_ticksPerQuarter = 480;
         double m_tempo = 120.0;
-        TempoMap m_tempoMap;
+        double m_pageWidth = 1224;
+        double m_pageHeight = 1584;
+        double m_staffDistance = 80.0;
 
-        bool m_looping = false;
-        double m_loopStart = 0.0;
-        double m_loopEnd = -1.0;  // -1 = no loop
+        // MusicXML parsing helpers
+        Note parseMusicXMLNote(QXmlStreamReader& xml);
+        void parseMusicXMLPitch(QXmlStreamReader& xml, Pitch& pitch);
+        void parseMusicXMLAttributes(QXmlStreamReader& xml, Measure* measure);
+        void parseMusicXMLTime(QXmlStreamReader& xml, Measure* measure);
+        void parseMusicXMLKey(QXmlStreamReader& xml, Measure* measure);
+        void parseMusicXMLClef(QXmlStreamReader& xml, Measure* measure);
+        void parseMusicXMLNotations(QXmlStreamReader& xml, Note& note);
+        void parseMusicXMLArticulations(QXmlStreamReader& xml, Note& note);
+        void parseMusicXMLOrnaments(QXmlStreamReader& xml, Note& note);
+        void parseMusicXMLLyric(QXmlStreamReader& xml, Note& note);
+        DurationType parseDurationType(const QString& str);
+        Duration durationFromQuarters(double quarters);
 
-        bool m_metronomeEnabled = false;
-        double m_metronomeVolume = 0.5;
-        double m_lastClickTime = -1.0;
-
-        double m_punchIn = -1.0;
-        double m_punchOut = -1.0;
-
-        QMutex m_positionMutex;
+        // MusicXML writing helpers
+        void writeMusicXMLAttributes(QXmlStreamWriter& xml, const Measure* measure, bool isFirst) const;
+        void writeMusicXMLNote(QXmlStreamWriter& xml, const Note& note, const Measure* measure) const;
+        void writeMusicXMLBarline(QXmlStreamWriter& xml, const Barline& barline) const;
     };
 
     // =============================================================================
-    // Clip Types - Unified base class
+    // Engraving Settings
     // =============================================================================
 
-    enum class ClipType {
-        Audio,      // Waveform data
-        MIDI,       // MIDI events
-        Notation,   // Structured notation (Score-based)
-        Automation  // Parameter automation
+    class EngravingSettings {
+    public:
+        double spatium = 20.0;
+        double noteHeadWidth = 22.0;
+        double stemWidth = 2.6;
+        double stemLength = 70.0;
+        double beamWidth = 10.0;
+        double lineWidth = 1.0;
+        double clefWidth = 50.0;
+        double timeSigWidth = 40.0;
+        double leftMargin = 10.0;
+        double rightMargin = 10.0;
+
+        QFont musicFont{"Bravura", 24};
+        QFont textFont{"Times New Roman", 12};
+        QFont lyricsFont{"Times New Roman", 11};
+
+        QColor noteColor{Qt::black};
+        QColor lineColor{Qt::black};
+        QColor textColor{Qt::black};
+        QColor selectionColor{100, 150, 255, 100};
+        QColor playbackColor{255, 100, 100, 150};
+
+        static EngravingSettings& defaults();
     };
+
+    // =============================================================================
+    // Score Renderer
+    // =============================================================================
+
+    class ScoreRenderer {
+    public:
+        explicit ScoreRenderer(Score* score);
+
+        void render(QPainter* painter, const QRectF& rect, int startStaff = 0, int staffCount = -1);
+        void renderMeasure(QPainter* painter, Measure* measure, const QPointF& pos);
+        void renderNote(QPainter* painter, const Note& note, const QPointF& pos);
+        void renderRest(QPainter* painter, const Note& rest, const QPointF& pos);
+        void renderClef(QPainter* painter, const Clef& clef, const QPointF& pos);
+        void renderKeySig(QPainter* painter, const KeySig& key, const QPointF& pos);
+        void renderTimeSig(QPainter* painter, const TimeSignature& ts, const QPointF& pos);
+        void renderBarline(QPainter* painter, const Barline& barline, const QPointF& pos, double height);
+
+        Note* noteAt(const QPointF& pos);
+        Measure* measureAt(const QPointF& pos);
+        Staff* staffAt(const QPointF& pos);
+
+        void doLayout();
+        void layoutMeasure(Measure* measure);
+        double measureWidth(Measure* measure) const;
+
+    private:
+        Score* m_score;
+        EngravingSettings m_settings;
+        static QMap<QString, uint> s_smuflCodes;
+
+        void initializeSmuflCodes();
+        void drawStaffLines(QPainter* painter, Staff* staff, const QRectF& rect);
+        void drawStem(QPainter* painter, const Note& note, const QPointF& notePos);
+        void drawFlag(QPainter* painter, const Note& note, const QPointF& stemEnd);
+        void drawAccidental(QPainter* painter, Accidental acc, const QPointF& pos);
+        void drawArticulation(QPainter* painter, Articulation art, const QPointF& notePos, bool above);
+        void drawLyric(QPainter* painter, const Lyric& lyric, const QPointF& pos);
+        double calculateNoteY(const Note& note) const;
+        double keySigWidth(const KeySig& key) const;
+        int midiToStaffLine(int midiNote) const;
+    };
+
+    // =============================================================================
+    // Effect Chain (Pillar 2) - Forward Declaration
+    // =============================================================================
+
+    class EffectChain {
+    public:
+        virtual ~EffectChain() = default;
+        virtual void process(float* buffer, int frames) = 0;
+        virtual void addEffect(std::shared_ptr<class AudioEffect> effect) = 0;
+    };
+
+    // =============================================================================
+    // Clip Base
+    // =============================================================================
 
     class Clip : public QObject {
         Q_OBJECT
-        Q_PROPERTY(QString name READ name WRITE setName NOTIFY nameChanged)
-        Q_PROPERTY(ClipType type READ type CONSTANT)
-        Q_PROPERTY(double startTime READ startTime WRITE setStartTime NOTIFY positionChanged)
-        Q_PROPERTY(double duration READ duration WRITE setDuration NOTIFY durationChanged)
-        Q_PROPERTY(bool muted READ isMuted WRITE setMuted NOTIFY stateChanged)
-        Q_PROPERTY(bool soloed READ isSoloed WRITE setSoloed NOTIFY stateChanged)
-        Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY appearanceChanged)
-
     public:
-        Clip(ClipType type, QObject* parent = nullptr);
+        explicit Clip(ClipType type, QObject* parent = nullptr);
         virtual ~Clip() = default;
 
-        // Basic properties
         ClipType type() const { return m_type; }
 
         QString name() const { return m_name; }
@@ -214,36 +605,17 @@ namespace Aegis {
         bool isMuted() const { return m_muted; }
         void setMuted(bool mute) { m_muted = mute; emit stateChanged(); }
 
-        bool isSoloed() const { return m_soloed; }
-        void setSoloed(bool solo) { m_soloed = solo; emit stateChanged(); }
-
         QColor color() const { return m_color; }
         void setColor(const QColor& c) { m_color = c; emit appearanceChanged(); }
 
-        // Fade in/out
-        double fadeIn() const { return m_fadeIn; }
-        double fadeOut() const { return m_fadeOut; }
-        void setFadeIn(double seconds);
-        void setFadeOut(double seconds);
-
-        // Stretch/pitch shift
-        double timeStretch() const { return m_timeStretch; }
-        double pitchShift() const { return m_pitchShift; }
-        void setTimeStretch(double ratio);
-        void setPitchShift(double semitones);
-
-        // Virtual methods for subclasses
-        virtual bool isEmpty() const = 0;
-        virtual void trimStart(double newStart);
-        virtual void trimEnd(double newEnd);
-        virtual void split(double time, Clip** outLeft = nullptr, Clip** outRight = nullptr);
-        virtual Clip* duplicate() const = 0;
-
-        // Playback preparation
-        virtual void preparePlayback(double startTime, double duration) {}
+        virtual void preparePlayback(double startTime, double duration) { Q_UNUSED(startTime) Q_UNUSED(duration) }
         virtual void cleanupPlayback() {}
+        virtual void processAudio(double position, int frames, float* buffer,
+                                  int channels, int sampleRate, const TempoMap& tempo) = 0;
+        virtual QVector<NoteEvent> getMidiEvents(double start, double end) = 0;
 
-        // Snap to grid
+        virtual bool isEmpty() const { return false; }
+
         void snapToGrid(const TempoMap& tempoMap, int subdivisions = 16);
 
     signals:
@@ -252,7 +624,7 @@ namespace Aegis {
         void durationChanged();
         void stateChanged();
         void appearanceChanged();
-        void modified();
+        void changed();
 
     protected:
         ClipType m_type;
@@ -260,19 +632,80 @@ namespace Aegis {
         double m_startTime = 0.0;
         double m_duration = 0.0;
         bool m_muted = false;
-        bool m_soloed = false;
         QColor m_color = QColor(100, 150, 200);
-
-        double m_fadeIn = 0.0;
-        double m_fadeOut = 0.0;
-        double m_timeStretch = 1.0;
-        double m_pitchShift = 0.0;
-
         mutable QReadWriteLock m_lock;
     };
 
     // =============================================================================
-    // Audio Clip (Existing)
+    // Notation Clip
+    // =============================================================================
+
+    class NotationClip : public Clip {
+        Q_OBJECT
+    public:
+        explicit NotationClip(QObject* parent = nullptr);
+
+        Score* score() const { return m_score.get(); }
+        void setScore(std::unique_ptr<Score> score);
+        void createEmptyScore(const QString& title = "Untitled");
+
+        bool isEmpty() const override;
+
+        void setStaffIndex(int index) { m_staffIndex = index; }
+        int staffIndex() const { return m_staffIndex; }
+
+        void setSynthesisEnabled(bool enabled) { m_synthEnabled = enabled; }
+        bool synthesisEnabled() const { return m_synthEnabled; }
+
+        void processAudio(double position, int frames, float* buffer,
+                          int channels, int sampleRate, const TempoMap& tempo) override;
+                          QVector<NoteEvent> getMidiEvents(double start, double end) override;
+
+                          QVector<NoteEvent> renderToMidi() const;
+
+    signals:
+        void scoreChanged();
+
+    private:
+        std::unique_ptr<Score> m_score;
+        bool m_synthEnabled = true;
+        int m_staffIndex = 0;
+
+        struct SynthState {
+            QVector<SynthVoice> voices;
+            int nextVoiceId = 0;
+            int lastProcessedTick = -1;
+        };
+        std::unique_ptr<SynthState> m_synthState;
+
+        void updateVoices(int currentTick, const TempoMap& tempo, int sampleRate);
+    };
+
+    // =============================================================================
+    // MIDI Clip
+    // =============================================================================
+
+    class MidiClip : public Clip {
+        Q_OBJECT
+    public:
+        explicit MidiClip(QObject* parent = nullptr);
+
+        void addEvent(const NoteEvent& event);
+        void addNote(const Pitch& pitch, double start, const Duration& dur, int vel = 80, int ch = 0);
+        void removeEvent(int index);
+        void clearEvents() { m_events.clear(); }
+        const QVector<NoteEvent>& events() const { return m_events; }
+
+        void processAudio(double position, int frames, float* buffer,
+                          int channels, int sampleRate, const TempoMap& tempo) override;
+                          QVector<NoteEvent> getMidiEvents(double start, double end) override;
+
+    private:
+        QVector<NoteEvent> m_events;
+    };
+
+    // =============================================================================
+    // Audio Clip - Simple Audio File Playback
     // =============================================================================
 
     class AudioClip : public Clip {
@@ -280,477 +713,174 @@ namespace Aegis {
     public:
         explicit AudioClip(QObject* parent = nullptr);
 
-        // File I/O
-        bool loadFromFile(const QString& path);
-        bool saveToFile(const QString& path) const;
+        bool load(const QString& path);
+        bool loadFromMemory(const QByteArray& data, int sampleRate, int channels);
 
-        // Audio data access
-        bool isEmpty() const override { return m_audioData.isEmpty(); }
-        const QVector<float>& audioData() const { return m_audioData; }
-        QVector<float>& audioData() { return m_audioData; }
-        void setAudioData(QVector<float>&& data, int sampleRate);
+        void processAudio(double position, int frames, float* buffer,
+                          int channels, int sampleRate, const TempoMap& tempo) override;
+                          QVector<NoteEvent> getMidiEvents(double start, double end) override;
 
-        int sampleRate() const { return m_sampleRate; }
-        int channels() const { return m_channels; }
-
-        // Peak data for display
-        QVector<float> peakData(double pixelsPerSecond) const;
-
-        // Waveform editing
-        void reverse();
-        void normalize(double targetDb = -1.0);
-        void applyGain(double db);
-        void fade(double startDb, double endDb, double startTime, double endTime);
-
-        Clip* duplicate() const override;
-
-        // Real-time access for playback
-        void getSamples(double clipTime, int frames, float* output, int channels);
+                          int sampleRate() const { return m_sampleRate; }
+                          int channels() const { return m_channels; }
+                          const QVector<float>& audioData() const { return m_audioData; }
 
     private:
         QVector<float> m_audioData;
         int m_sampleRate = 48000;
         int m_channels = 2;
-        mutable QVector<float> m_peakCache;
-        mutable double m_peakCacheZoom = 0.0;
+        mutable int m_readPosition = 0;
     };
 
     // =============================================================================
-    // MIDI Clip (Existing)
-    // =============================================================================
-
-    struct MidiEvent {
-        enum Type { NoteOn, NoteOff, ControlChange, PitchBend, ProgramChange, PolyPressure };
-        Type type;
-        double time;        // Seconds from clip start
-        int channel = 0;
-        int note = 0;       // For note events
-        int velocity = 0;   // For note events
-        int controller = 0; // For CC
-        int value = 0;      // For CC/velocity
-    };
-
-    class MidiClip : public Clip {
-        Q_OBJECT
-    public:
-        explicit MidiClip(QObject* parent = nullptr);
-
-        bool isEmpty() const override { return m_events.isEmpty(); }
-
-        // MIDI data
-        void addEvent(const MidiEvent& event);
-        void removeEvent(int index);
-        void clearEvents() { m_events.clear(); }
-        const QVector<MidiEvent>& events() const { return m_events; }
-        QVector<MidiEvent> eventsInRange(double start, double end) const;
-
-        // Note editing
-        void addNote(int note, double start, double duration, int velocity = 80, int channel = 0);
-        void removeNote(int note, double start);
-        void transpose(int semitones);
-        void quantize(double grid, double strength = 1.0);
-
-        Clip* duplicate() const override;
-
-        // Real-time access
-        QVector<MidiEvent> getEventsForTimeRange(double clipStart, double clipEnd) const;
-
-    private:
-        QVector<MidiEvent> m_events;
-    };
-
-    // =============================================================================
-    // Notation Clip - NEW: Integrates music notation into DAW
-    // =============================================================================
-
-    enum class NotationDisplayMode {
-        Score,      // Traditional notation
-        PianoRoll,  // MIDI-like view
-        Both        // Split view
-    };
-
-    class NotationClip : public Clip {
-        Q_OBJECT
-    public:
-        explicit NotationClip(QObject* parent = nullptr);
-
-        // Core notation data (reuses music_notation.h types)
-        Score* score() const { return m_score.get(); }
-        void setScore(std::unique_ptr<Score> score);
-        void createEmptyScore(const QString& title = "Untitled");
-
-        // Staff-to-track mapping
-        void setStaffIndex(int index) { m_staffIndex = index; }
-        int staffIndex() const { return m_staffIndex; }
-
-        // Time mapping (notation uses beats/ticks, clips use seconds)
-        double ticksPerQuarter() const { return m_score ? m_score->ticksPerQuarter() : 480.0; }
-        double beatToTime(double beat) const;
-        double timeToBeat(double time) const;
-        int timeToTick(double time) const;
-        double tickToTime(int tick) const;
-
-        // Rendering options
-        NotationDisplayMode displayMode() const { return m_displayMode; }
-        void setDisplayMode(NotationDisplayMode mode) { m_displayMode = mode; }
-
-        // Synthesis settings
-        void setSynthesisEnabled(bool enabled) { m_synthesisEnabled = enabled; }
-        bool synthesisEnabled() const { return m_synthesisEnabled; }
-        void setInstrumentId(int id) { m_instrumentId = id; }
-        int instrumentId() const { return m_instrumentId; }
-
-        // Conversion
-        void toMidiClip(MidiClip* midiClip) const;  // Export to MIDI
-        void fromMidiClip(const MidiClip* midiClip); // Import from MIDI
-
-        // Clip interface
-        bool isEmpty() const override;
-        Clip* duplicate() const override;
-        void preparePlayback(double startTime, double duration) override;
-        void cleanupPlayback() override;
-
-        // Real-time rendering
-        void renderAudio(double clipTime, int frames, float* output, int channels, int sampleRate);
-        QVector<MidiEvent> renderMidi(double clipTime, double duration) const;
-
-        // Score access at specific time
-        Measure* measureAtTime(double clipTime) const;
-        QVector<Note*> notesAtTime(double clipTime) const;
-        Note* noteAtPosition(double clipTime, int voice = 0) const;
-
-    signals:
-        void scoreModified();
-        void renderingModeChanged();
-
-    private:
-        std::unique_ptr<Score> m_score;
-        int m_staffIndex = 0;  // Which staff in the score this clip represents
-
-        NotationDisplayMode m_displayMode = NotationDisplayMode::Score;
-        bool m_synthesisEnabled = true;
-        int m_instrumentId = 0;  // For synthesis
-
-        // Real-time synthesis state
-        struct SynthesisState {
-            double phase = 0.0;
-            QVector<SynthVoice> activeVoices;
-            double lastRenderTime = -1.0;
-        };
-        std::unique_ptr<SynthesisState> m_synthState;
-
-        // Simple synthesis for playback (placeholder for proper sampler)
-        struct SimpleVoice {
-            int midiNote;
-            double startTime;
-            double duration;
-            double phase = 0.0;
-            double velocity = 0.8;
-            bool active = false;
-        };
-        QVector<SimpleVoice> m_voices;
-
-        void initializeSynthesis();
-        double noteFrequency(int midiNote) const;
-    };
-
-    // =============================================================================
-    // Automation Clip (Existing)
-    // =============================================================================
-
-    class AutomationClip : public Clip {
-        Q_OBJECT
-    public:
-        explicit AutomationClip(QObject* parent = nullptr);
-
-        bool isEmpty() const override { return m_points.isEmpty(); }
-
-        // Control points
-        struct Point {
-            double time;
-            double value;
-            enum Type { Linear, Smooth, Step } type = Linear;
-        };
-
-        void addPoint(const Point& point);
-        void removePoint(int index);
-        void clearPoints() { m_points.clear(); }
-        const QVector<Point>& points() const { return m_points; }
-
-        // Evaluation
-        double valueAt(double time) const;
-        void setTargetParameter(QObject* object, const QString& propertyName);
-
-        Clip* duplicate() const override;
-
-    private:
-        QVector<Point> m_points;
-        QObject* m_targetObject = nullptr;
-        QString m_targetProperty;
-    };
-
-    // =============================================================================
-    // Track - Can contain any clip type
+    // Track
     // =============================================================================
 
     class Track : public QObject {
         Q_OBJECT
-        Q_PROPERTY(QString name READ name WRITE setName NOTIFY nameChanged)
-        Q_PROPERTY(bool muted READ isMuted WRITE setMuted NOTIFY stateChanged)
-        Q_PROPERTY(bool soloed READ isSoloed WRITE setSoloed NOTIFY stateChanged)
-        Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
-        Q_PROPERTY(double pan READ pan WRITE setPan NOTIFY panChanged)
-        Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY appearanceChanged)
-
     public:
         explicit Track(const QString& name, QObject* parent = nullptr);
-        virtual ~Track();
 
-        // Properties
         QString name() const { return m_name; }
         void setName(const QString& name) { m_name = name; emit nameChanged(); }
-
-        bool isMuted() const { return m_muted; }
-        void setMuted(bool mute) { m_muted = mute; emit stateChanged(); }
-
-        bool isSoloed() const { return m_soloed; }
-        void setSoloed(bool solo) { m_soloed = solo; emit stateChanged(); }
 
         double volume() const { return m_volume; }
         void setVolume(double vol) { m_volume = vol; emit volumeChanged(); }
 
         double pan() const { return m_pan; }
-        void setPan(double pan) { m_pan = qBound(-1.0, pan, 1.0); emit panChanged(); }
+        void setPan(double p) { m_pan = std::max(-1.0, std::min(1.0, p)); emit panChanged(); }
 
-        QColor color() const { return m_color; }
-        void setColor(const QColor& c) { m_color = c; emit appearanceChanged(); }
+        bool isMuted() const { return m_muted; }
+        void setMuted(bool m) { m_muted = m; emit stateChanged(); }
 
-        // Clip management
+        bool isSoloed() const { return m_soloed; }
+        void setSoloed(bool s) { m_soloed = s; emit stateChanged(); }
+
         void addClip(std::unique_ptr<Clip> clip);
         void removeClip(Clip* clip);
-        void removeClipAt(int index);
         Clip* clipAt(int index) const;
         int clipCount() const { return m_clips.size(); }
-        const QVector<std::unique_ptr<Clip>>& clips() const { return m_clips; }
-
-        // Find clips at time
         QVector<Clip*> clipsAt(double time) const;
-        Clip* clipAt(double time, ClipType type = static_cast<ClipType>(-1)) const;
-
-        // Specific clip types
-        QVector<AudioClip*> audioClips() const;
-        QVector<MidiClip*> midiClips() const;
         QVector<NotationClip*> notationClips() const;
 
-        // Effects chain (Pillar 2)
-        EffectChain* effectChain() { return &m_effects; }
-        const EffectChain* effectChain() const { return &m_effects; }
+        // Tracker integration
+        QVector<ModTrackerClip*> trackerClips() const;
 
-        // MIDI/Notation specific
-        int midiChannel() const { return m_midiChannel; }
-        void setMidiChannel(int ch) { m_midiChannel = ch; }
-        int midiProgram() const { return m_midiProgram; }
-        void setMidiProgram(int prog) { m_midiProgram = prog; }
-
-        // Audio I/O
-        void setInputBus(const QString& bus) { m_inputBus = bus; }
-        QString inputBus() const { return m_inputBus; }
-        void setOutputBus(const QString& bus) { m_outputBus = bus; }
-        QString outputBus() const { return m_outputBus; }
-
-        // Real-time processing
-        void processAudio(double position, int frames, float* buffer, int channels, int sampleRate);
-        void processMidi(double position, double duration, QVector<MidiEvent>& events);
+        void processAudio(double position, int frames, float* buffer,
+                          int channels, int sampleRate, const TempoMap& tempo);
+        void collectMidiEvents(double position, double duration, QVector<NoteEvent>& events);
 
     signals:
         void nameChanged();
-        void stateChanged();
         void volumeChanged();
         void panChanged();
-        void appearanceChanged();
+        void stateChanged();
         void clipAdded(Clip* clip);
         void clipRemoved(Clip* clip);
-        void clipChanged(Clip* clip);
 
     private:
         QString m_name;
-        bool m_muted = false;
-        bool m_soloed = false;
         double m_volume = 1.0;
         double m_pan = 0.0;
-        QColor m_color;
-
+        bool m_muted = false;
+        bool m_soloed = false;
         QVector<std::unique_ptr<Clip>> m_clips;
-        EffectChain m_effects;
-
-        // MIDI/Notation settings
-        int m_midiChannel = 0;
-        int m_midiProgram = 0;
-
-        // Audio routing
-        QString m_inputBus;
-        QString m_outputBus = "master";
-
         mutable QReadWriteLock m_lock;
     };
 
     // =============================================================================
-    // Master Track and Mix Buses
+    // Transport
     // =============================================================================
 
-    class MasterTrack : public Track {
+    class Transport : public QObject {
         Q_OBJECT
     public:
-        explicit MasterTrack(QObject* parent = nullptr);
+        explicit Transport(QObject* parent = nullptr);
 
-        // Master-specific processing
-        void processMaster(double position, int frames,
-                           const QMap<QString, float*>& busBuffers,
-                           float* output, int channels, int sampleRate);
+        double position() const { return m_position.load(); }
+        void setPosition(double pos);
 
-        // Metering
-        float currentLoudness() const { return m_currentLoudness; }
-        float peakLevel() const { return m_peakLevel; }
+        TransportState state() const { return m_state; }
+        void play();
+        void stop();
+        void pause();
+        void togglePlay();
+
+        double tempo() const { return m_tempo; }
+        void setTempo(double bpm);
+
+        void seekToBeat(double beat);
+        double beatToTime(double beat) const;
+        double timeToBeat(double time) const;
+
+        TempoMap* tempoMap() { return &m_tempoMap; }
+        const TempoMap* tempoMap() const { return &m_tempoMap; }
+
+        bool isLooping() const { return m_looping; }
+        void setLooping(bool loop) { m_looping = loop; }
+        double loopStart() const { return m_loopStart; }
+        double loopEnd() const { return m_loopEnd; }
+        void setLoopRange(double start, double end);
+
+    signals:
+        void positionChanged(double pos);
+        void stateChanged(TransportState state);
+        void tempoChanged(double tempo);
+        void aboutToLoop();
 
     private:
-        float m_currentLoudness = 0.0f;
-        float m_peakLevel = 0.0f;
+        std::atomic<double> m_position{0.0};
+        TransportState m_state = TransportState::Stopped;
+        double m_tempo = 120.0;
+        TempoMap m_tempoMap;
+        bool m_looping = false;
+        double m_loopStart = 0.0;
+        double m_loopEnd = -1.0;
+        QMutex m_positionMutex;
     };
 
     // =============================================================================
-    // DAW Engine - Main controller
+    // DAW Engine
     // =============================================================================
 
     class DAWEngine : public QObject {
         Q_OBJECT
     public:
-        explicit DAWEngine(AudioEngine* audioEngine, QObject* parent = nullptr);
-        ~DAWEngine();
+        explicit DAWEngine(QObject* parent = nullptr);
 
-        // Audio system integration
-        AudioEngine* audioEngine() const { return m_audioEngine; }
-        AudioOutput* audioOutput() const { return m_audioOutput; }
+        Transport* transport() { return &m_transport; }
 
-        // Transport
-        DAWTransport* transport() { return &m_transport; }
-
-        // Tracks
         Track* addTrack(const QString& name = QString());
         void removeTrack(int index);
-        void removeTrack(Track* track);
         Track* trackAt(int index) const;
         int trackCount() const { return m_tracks.size(); }
-        const QVector<std::unique_ptr<Track>>& tracks() const { return m_tracks; }
 
-        Track* masterTrack() const { return m_masterTrack.get(); }
-
-        // Buses
-        void createBus(const QString& name);
-        void removeBus(const QString& name);
-        QStringList busNames() const;
-
-        // Notation-specific methods
+        NotationClip* createNotationClip(int trackIndex = -1, const QString& name = "Notation");
         NotationClip* importScore(const QString& path, int trackIndex = -1);
-        NotationClip* createNotationTrack(const QString& name = "Notation");
-        void notationToMidi(NotationClip* notation, MidiClip* midi);
-        void midiToNotation(MidiClip* midi, NotationClip* notation);
 
-        // Playback control
-        void startPlayback();
-        void stopPlayback();
-        void startRecording();
+        // Tracker integration methods
+        ModTrackerClip* createTrackerClip(int trackIndex = -1,
+                                          const QString& name = "Tracker",
+                                          int channels = 4);
+        ModTrackerClip* importTrackerModule(const QString& path,
+                                            int trackIndex = -1);
+        Track* createTrackerTrack(const QString& name = "Tracker Track");
 
-        // Export
-        bool exportMix(const QString& path, const QString& format = "WAV");
-        bool exportStem(const QString& trackName, const QString& path);
-        bool exportNotationPDF(const QString& path);
+        void processAudio(float* buffer, int frames, int channels, int sampleRate);
 
-        // State
-        bool isModified() const { return m_modified; }
-        void setModified(bool mod) { m_modified = mod; }
-
-        // Serialization
         bool saveProject(const QString& path);
         bool loadProject(const QString& path);
 
     signals:
         void trackAdded(Track* track);
         void trackRemoved(int index);
-        void playbackStarted();
-        void playbackStopped();
-        void recordingStarted();
-        void recordingStopped();
-        void modifiedChanged(bool modified);
-        void audioCallbackError(const QString& error);
-
-    private slots:
-        void onTransportPositionChanged(double pos);
-        void onTransportStateChanged(TransportState state);
-        void processAudioCallback(float* buffer, int frames);
 
     private:
-        void initializeAudio();
-        void shutdownAudio();
-        void processTrack(Track* track, double position, int frames,
-                          float* buffer, int channels, int sampleRate);
-        void applyMasterEffects(float* buffer, int frames, int channels, int sampleRate);
-
-        AudioEngine* m_audioEngine;
-        AudioOutput* m_audioOutput = nullptr;
-        DAWTransport m_transport;
-
+        Transport m_transport;
         QVector<std::unique_ptr<Track>> m_tracks;
-        std::unique_ptr<MasterTrack> m_masterTrack;
-        QMap<QString, std::unique_ptr<Track>> m_buses;
-
-        // Tempo map sync
-        void syncTempoToNotation(NotationClip* clip);
-        void syncNotationToTempo(NotationClip* clip);
-
-        // Recording
-        bool m_recording = false;
-        QMap<Track*, std::unique_ptr<AudioClip>> m_recordingClips;
-
-        bool m_modified = false;
-        QMutex m_engineLock;
-
-        // Thread-local mix buffer
         QVector<float> m_mixBuffer;
-    };
-
-    // =============================================================================
-    // Undo Commands
-    // =============================================================================
-
-    class AddTrackCommand : public QUndoCommand {
-    public:
-        AddTrackCommand(DAWEngine* engine, const QString& name, QUndoCommand* parent = nullptr);
-        void undo() override;
-        void redo() override;
-    private:
-        DAWEngine* m_engine;
-        QString m_name;
-        Track* m_track = nullptr;
-        int m_index = -1;
-    };
-
-    class RemoveTrackCommand : public QUndoCommand {
-        // ...
-    };
-
-    class AddClipCommand : public QUndoCommand {
-    public:
-        AddClipCommand(Track* track, std::unique_ptr<Clip> clip, QUndoCommand* parent = nullptr);
-        void undo() override;
-        void redo() override;
-    private:
-        Track* m_track;
-        std::unique_ptr<Clip> m_clip;
-        int m_index = -1;
     };
 
 } // namespace Aegis
 
 Q_DECLARE_METATYPE(Aegis::TransportState)
 Q_DECLARE_METATYPE(Aegis::ClipType)
-Q_DECLARE_METATYPE(Aegis::NotationDisplayMode)

@@ -406,7 +406,7 @@ namespace Aegis {
         Q_PROPERTY(QString artist READ artist NOTIFY metadataChanged)
 
     public:
-        explicit ModTrackerPlayback(QObject *parent = nullptr);
+        explicit ModTrackerPlayback(AudioEngine* engine = nullptr);
         ~ModTrackerPlayback();
 
         /**
@@ -511,6 +511,8 @@ namespace Aegis {
         static constexpr int SAMPLE_RATE = 48000;
         static constexpr int CHANNELS = 2;
         static constexpr int CHUNK_FRAMES = 512;    ///< Render chunk size
+
+        AudioEngine* m_engine = nullptr;
     };
 
     // ============================================================================
@@ -599,14 +601,6 @@ namespace Aegis {
         QString lastError() const { return m_lastError; }
         void clearError() { m_lastError.clear(); }
 
-    signals:
-        void spectrumUpdated();                  ///< New spectrum data available
-        void loudnessUpdated();                  ///< Loudness measurements updated
-        void processingChanged(bool enabled);    ///< Processing enabled state changed
-        void karaokeChanged(bool enabled);       ///< Karaoke mode changed
-        void trackerModeChanged(bool trackerMode); ///< Audio source changed
-        void errorOccurred(const QString& message); ///< Processing error occurred
-
         // Audio output management
         void setAudioOutput(std::unique_ptr<AudioOutput> output);
         AudioOutput* audioOutput() const { return m_output.get(); }
@@ -615,7 +609,21 @@ namespace Aegis {
         void processOutput(float* buffer, int frames);
 
         // Spectrum analysis delegation
-        QVector<float> calculateSpectrum(const float* data, int samples, int
+        QVector<float> calculateSpectrum(const float* data, int samples, int channels);
+
+    signals:
+        void spectrumUpdated();                  ///< New spectrum data available
+        void loudnessUpdated();                  ///< Loudness measurements updated
+        void processingChanged(bool enabled);    ///< Processing enabled state changed
+        void karaokeChanged(bool enabled);       ///< Karaoke mode changed
+        void trackerModeChanged(bool trackerMode); ///< Audio source changed
+        void errorOccurred(const QString& message); ///< Processing error occurred
+
+        // Transport-related signals forwarded from backend
+        void positionChanged(double position);
+        void stateChanged(PlaybackState state);
+        void finished();
+        void error(const QString &message);
 
     private:
         std::unique_ptr<AudioOutput> m_output;  // PipeWire/Qt/etc.

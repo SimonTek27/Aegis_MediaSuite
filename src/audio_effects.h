@@ -102,8 +102,7 @@ namespace Aegis {
         float m_current = 0.0f;          ///< Current smoothed value
         float m_smoothingCoeff = 0.0f;   ///< Pre-calculated smoothing coefficient
         float m_smoothingTimeMs;         ///< Smoothing time constant
-
-}
+    };
 
     // ============================================================================
     // Enhanced Audio Buffer with SIMD Optimization
@@ -200,10 +199,13 @@ namespace Aegis {
         void copyFrom(const EnhancedAudioBuffer &src, int srcOffset, int dstOffset, int count) {
             int srcStart = srcOffset * src.m_channels;
             int dstStart = dstOffset * m_channels;
+            qint64 maxCopy = std::min<qint64>(src.totalSamples() - srcStart,
+                                              totalSamples() - dstStart);
             int copyCount = std::min(count * src.m_channels,
-                                     std::min(src.totalSamples() - srcStart, totalSamples() - dstStart));
+                                     static_cast<int>(maxCopy));
             if (copyCount > 0) {
-                std::memcpy(m_data.data() + dstStart, src.data() + srcStart, copyCount * sizeof(float));
+                std::memcpy(m_data.data() + dstStart, src.data() + srcStart,
+                            static_cast<size_t>(copyCount) * sizeof(float));
             }
         }
 
@@ -1510,6 +1512,5 @@ namespace Aegis {
 
 // Register types for Qt's meta-object system
 Q_DECLARE_METATYPE(Aegis::EffectContext)
-Q_DECLARE_METATYPE(Aegis::Selection)
 Q_DECLARE_METATYPE(Aegis::FilterEffect::FilterType)
 Q_DECLARE_METATYPE(Aegis::FadeEffect::FadeType)

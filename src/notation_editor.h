@@ -1,17 +1,31 @@
 // notation_editor.h - Interactive Music Notation Editor
 // MuseScore-like editing interface with real-time playback
+// Compatible with Aegis DAW Engine
 
 #pragma once
 
-#include "music_notation.h"
-#include "audio.h"
-#include "audio_output.h"
+#include "audio_daw.h"
 #include <QWidget>
 #include <QScrollArea>
 #include <QTimer>
 #include <QUndoStack>
+#include <QTransform>
+#include <QMap>
 
 namespace Aegis {
+
+    // =============================================================================
+    // Forward Declarations
+    // =============================================================================
+
+    class AudioEngine;
+    class AudioOutput;
+
+    // =============================================================================
+    // Type Aliases for Compatibility
+    // =============================================================================
+
+    using NoteDuration = Duration::Type;
 
     // =============================================================================
     // NotationEditTool
@@ -38,7 +52,7 @@ namespace Aegis {
     // =============================================================================
 
     struct NoteInputState {
-        Duration duration{NoteDuration::Quarter, 0};
+        Duration duration{Duration::Type::Quarter, 0};
         int voice = 0;
         bool tieMode = false;
         bool slurMode = false;
@@ -50,9 +64,19 @@ namespace Aegis {
         bool insertMode = false;  // Insert vs overwrite
 
         void toggleDot() {
-            if (!dotted) { dotted = true; doubleDotted = false; }
-            else if (!doubleDotted) { dotted = false; doubleDotted = true; }
-            else { dotted = false; doubleDotted = false; }
+            if (!dotted) {
+                dotted = true;
+                doubleDotted = false;
+                duration.dots = 1;
+            } else if (!doubleDotted) {
+                dotted = false;
+                doubleDotted = true;
+                duration.dots = 2;
+            } else {
+                dotted = false;
+                doubleDotted = false;
+                duration.dots = 0;
+            }
         }
     };
 
@@ -64,6 +88,7 @@ namespace Aegis {
         Q_OBJECT
     public:
         explicit ScoreView(QWidget* parent = nullptr);
+        ~ScoreView() override = default;
 
         void setScore(Score* score);
         Score* score() const { return m_score; }
@@ -87,12 +112,13 @@ namespace Aegis {
         EditTool editTool() const { return m_currentTool; }
 
         NoteInputState& inputState() { return m_inputState; }
-        void setInputDuration(NoteDuration dur);
+        const NoteInputState& inputState() const { return m_inputState; }
+        void setInputDuration(Duration::Type dur);
 
         // Selection
         void selectAll();
         void selectNone();
-        bool hasSelection() const;
+        bool hasSelection() const { return !m_selectedNotes.isEmpty() || !m_selectedMeasures.isEmpty(); }
         void deleteSelection();
         void copy();
         void cut();
@@ -112,8 +138,8 @@ namespace Aegis {
         void highlightPlayingNotes(const QVector<Note*>& notes);
 
         // Pillar integration
-        void setAudioEngine(AudioEngine* engine);
-        void setAudioOutput(AudioOutput* output);
+        void setAudioEngine(AudioEngine* engine) { m_audioEngine = engine; }
+        void setAudioOutput(AudioOutput* output) { m_audioOutput = output; }
 
     signals:
         void selectionChanged();
@@ -196,7 +222,7 @@ namespace Aegis {
         Q_OBJECT
     public:
         explicit NotationEditor(QWidget* parent = nullptr);
-        ~NotationEditor();
+        ~NotationEditor() override = default;
 
         // File operations
         bool newScore(const QString& title = QString());
@@ -226,18 +252,24 @@ namespace Aegis {
         bool canRedo() const;
 
         // Pillar integration
-        void setAudioEngine(AudioEngine* engine) { m_audioEngine = engine; m_view->setAudioEngine(engine); }
-        void setAudioOutput(AudioOutput* output) { m_audioOutput = output; m_view->setAudioOutput(output); }
+        void setAudioEngine(AudioEngine* engine) {
+            m_audioEngine = engine;
+            if (m_view) m_view->setAudioEngine(engine);
+        }
+        void setAudioOutput(AudioOutput* output) {
+            m_audioOutput = output;
+            if (m_view) m_view->setAudioOutput(output);
+        }
 
         // Tools
         void setTool(EditTool tool);
-        void setNoteDuration(NoteDuration dur);
+        void setNoteDuration(Duration::Type dur);
         void toggleDot();
         void toggleTie();
         void toggleSlur();
         void setAccidental(Accidental acc);
         void setArticulation(Articulation art);
-        void addDynamic(Dynamic dyn);
+        void addDynamic(int dynValue);  // 0-127 MIDI velocity equivalent
 
     signals:
         void scoreModified(bool modified);
@@ -280,6 +312,7 @@ namespace Aegis {
         int m_playbackStartTick = 0;
         int m_loopStartTick = -1;
         int m_loopEndTick = -1;
+        QTime m_playbackStartTime;
         QTimer m_playbackTimer;
 
         // Audio rendering
@@ -297,11 +330,11 @@ namespace Aegis {
         explicit NoteInputController(NotationEditor* editor, QObject* parent = nullptr);
 
         // MIDI input
-        void setMidiInputEnabled(bool enabled);
-        bool isMidiInputEnabled() const;
+        void setMidiInputEnabled(bool enabled) { m_midiEnabled = enabled; }
+        bool isMidiInputEnabled() const { return m_midiEnabled; }
 
         // Keyboard mapping
-        void setComputerKeyboardInput(bool enabled);
+        void setComputerKeyboardInput(bool enabled) { m_keyboardEnabled = enabled; }
         bool handleKeyPress(int key, Qt::KeyboardModifiers modifiers);
 
         // MIDI mapping
@@ -335,7 +368,7 @@ namespace Aegis {
         void elementSelected(const QString& category, const QString& element);
         void accidentalSelected(Accidental acc);
         void articulationSelected(Articulation art);
-        void dynamicSelected(Dynamic dyn);
+        void dynamicSelected(int dynValue);
         void clefSelected(ClefType clef);
     };
 

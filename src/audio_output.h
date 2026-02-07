@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include "audio.h"
 #include <QObject>
 #include <QIODevice>
 #include <QAudioSink>
@@ -20,6 +19,9 @@ struct pw_context;
 struct pw_stream;
 struct spa_hook;
 struct pw_buffer;
+
+#include <pipewire/pipewire.h>
+#include <spa/param/audio/format-utils.h>
 
 namespace Aegis {
 

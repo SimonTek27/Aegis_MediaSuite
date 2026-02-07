@@ -31,7 +31,7 @@ signals:
 private slots:
     // xdg-desktop-portal Response handler
     void onPortalResponse(uint code, const QVariantMap &results);
-    void onFfmpegFinished(int code);
+    void onFfmpegFinished(int code, QProcess::ExitStatus status);
 
 private:
     bool requestPortalSession();

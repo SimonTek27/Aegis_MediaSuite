@@ -1,4 +1,4 @@
-// notation_editor.cpp - Notation Editor Implementation
+// notation_editor.cpp - Notation Editor
 #include "notation_editor.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -11,6 +11,9 @@
 #include <QFileDialog>
 #include <QPainter>
 #include <QScrollBar>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
 #include <QtMath>
 
 namespace Aegis {
@@ -36,8 +39,8 @@ namespace Aegis {
 
     void ScoreView::setScore(Score* score) {
         m_score = score;
-        m_renderer = ScoreRenderer(score);
         if (score) {
+            m_renderer = ScoreRenderer(score);
             m_renderer.doLayout();
         }
         update();
@@ -77,9 +80,11 @@ namespace Aegis {
         update();
     }
 
-    void ScoreView::setInputDuration(NoteDuration dur) {
+    void ScoreView::setInputDuration(Duration::Type dur) {
         m_inputState.duration.type = dur;
         m_inputState.duration.dots = 0;
+        m_inputState.dotted = false;
+        m_inputState.doubleDotted = false;
         update();
     }
 
@@ -87,9 +92,12 @@ namespace Aegis {
         if (!m_score || !m_currentMeasure) return;
 
         Pitch pitch(pc, m_inputState.octave, m_inputState.accidental);
-        Note note(pitch, m_inputState.duration);
+        Note note;
+        note.pitch = pitch;
+        note.duration = m_inputState.duration;
         note.voice = m_inputState.voice;
         note.tickPosition = m_currentTick;
+        note.velocity = 80;
 
         // Add to measure
         m_currentMeasure->addNote(note, m_inputState.voice);
@@ -100,30 +108,248 @@ namespace Aegis {
 
         // Auto-advance to next measure if needed
         if (m_currentTick >= m_currentMeasure->lengthTicks()) {
-            // Find next measure
+            // Find next measure in current staff
+            int currentMeasureIdx = -1;
+            if (m_currentStaff) {
+                for (int i = 0; i < m_currentStaff->measures.size(); ++i) {
+                    if (m_currentStaff->measures[i].get() == m_currentMeasure) {
+                        currentMeasureIdx = i;
+                        break;
+                    }
+                }
+                if (currentMeasureIdx >= 0 && currentMeasureIdx + 1 < m_currentStaff->measures.size()) {
+                    m_currentMeasure = m_currentStaff->measures[currentMeasureIdx + 1].get();
+                    m_currentTick = 0;
+                }
+            }
         }
 
-        setModified(true);
         update();
     }
 
     void ScoreView::inputRest() {
         if (!m_score || !m_currentMeasure) return;
 
-        Rest rest(m_inputState.duration);
+        // Create rest as a Note with isRest flag
+        Note rest;
+        rest.isRest = true;
+        rest.duration = m_inputState.duration;
         rest.tickPosition = m_currentTick;
         rest.voice = m_inputState.voice;
+        rest.velocity = 0;
 
         m_currentMeasure->addNote(rest, m_inputState.voice);
 
         int durationTicks = static_cast<int>(m_inputState.duration.toQuarterNotes() * 480);
         m_currentTick += durationTicks;
 
-        setModified(true);
+        // Auto-advance to next measure if needed
+        if (m_currentTick >= m_currentMeasure->lengthTicks()) {
+            int currentMeasureIdx = -1;
+            if (m_currentStaff) {
+                for (int i = 0; i < m_currentStaff->measures.size(); ++i) {
+                    if (m_currentStaff->measures[i].get() == m_currentMeasure) {
+                        currentMeasureIdx = i;
+                        break;
+                    }
+                }
+                if (currentMeasureIdx >= 0 && currentMeasureIdx + 1 < m_currentStaff->measures.size()) {
+                    m_currentMeasure = m_currentStaff->measures[currentMeasureIdx + 1].get();
+                    m_currentTick = 0;
+                }
+            }
+        }
+
+        update();
+    }
+
+    void ScoreView::inputChord(const QVector<PitchClass>& pitches) {
+        if (!m_score || !m_currentMeasure || pitches.isEmpty()) return;
+
+        // Add first note as main note
+        Pitch firstPitch(pitches[0], m_inputState.octave, m_inputState.accidental);
+        Note mainNote;
+        mainNote.pitch = firstPitch;
+        mainNote.duration = m_inputState.duration;
+        mainNote.voice = m_inputState.voice;
+        mainNote.tickPosition = m_currentTick;
+        mainNote.velocity = 80;
+
+        // Add additional pitches as chord tones
+        for (int i = 1; i < pitches.size(); ++i) {
+            Pitch chordPitch(pitches[i], m_inputState.octave, m_inputState.accidental);
+            mainNote.chordPitches.append(chordPitch);
+        }
+
+        m_currentMeasure->addNote(mainNote, m_inputState.voice);
+
+        int durationTicks = static_cast<int>(m_inputState.duration.toQuarterNotes() * 480);
+        m_currentTick += durationTicks;
+        update();
+    }
+
+    void ScoreView::toggleTie() {
+        if (m_selectedNotes.isEmpty()) return;
+
+        for (Note* note : m_selectedNotes) {
+            if (note->tie == TieType::None) {
+                note->tie = TieType::Start;
+            } else if (note->tie == TieType::Start) {
+                note->tie = TieType::Stop;
+            } else {
+                note->tie = TieType::None;
+            }
+        }
+        update();
+    }
+
+    void ScoreView::toggleSlur() {
+        if (m_selectedNotes.isEmpty()) return;
+
+        // Toggle slur on selected notes
+        for (Note* note : m_selectedNotes) {
+            if (note->slurs.isEmpty()) {
+                note->slurs.append(SlurType::Start);
+            } else if (note->slurs.last() == SlurType::Start) {
+                note->slurs.append(SlurType::Stop);
+            } else {
+                note->slurs.clear();
+            }
+        }
+        update();
+    }
+
+    void ScoreView::addArticulation(Articulation art) {
+        if (m_selectedNotes.isEmpty()) return;
+
+        for (Note* note : m_selectedNotes) {
+            if (!note->articulations.contains(art)) {
+                note->articulations.append(art);
+            } else {
+                note->articulations.removeAll(art);
+            }
+        }
+        update();
+    }
+
+    void ScoreView::transposeSelection(int semitones) {
+        if (m_selectedNotes.isEmpty()) return;
+
+        for (Note* note : m_selectedNotes) {
+            if (!note->isRest) {
+                int newMidi = note->pitch.midiNote + semitones;
+                newMidi = qBound(0, newMidi, 127);
+                note->pitch.fromMidi(newMidi);
+            }
+        }
+        update();
+    }
+
+    void ScoreView::selectAll() {
+        m_selectedNotes.clear();
+        m_selectedMeasures.clear();
+
+        if (!m_score) return;
+
+        for (const auto& staff : m_score->staves) {
+            for (const auto& measure : staff->measures) {
+                m_selectedMeasures.append(measure.get());
+                for (auto& note : measure->notes) {
+                    m_selectedNotes.append(&note);
+                }
+            }
+        }
+        emit selectionChanged();
+        update();
+    }
+
+    void ScoreView::selectNone() {
+        m_selectedNotes.clear();
+        m_selectedMeasures.clear();
+        emit selectionChanged();
+        update();
+    }
+
+    void ScoreView::deleteSelection() {
+        if (m_selectedNotes.isEmpty()) return;
+
+        // Remove selected notes from their measures
+        for (Note* note : m_selectedNotes) {
+            if (note->measure) {
+                auto& notes = note->measure->notes;
+                for (int i = 0; i < notes.size(); ++i) {
+                    if (&notes[i] == note) {
+                        note->measure->removeNote(i);
+                        break;
+                    }
+                }
+            }
+        }
+        m_selectedNotes.clear();
+        emit selectionChanged();
+        update();
+    }
+
+    void ScoreView::copy() {
+        // TODO: Implement clipboard functionality
+        // Would need to serialize selected notes
+    }
+
+    void ScoreView::cut() {
+        copy();
+        deleteSelection();
+    }
+
+    void ScoreView::paste() {
+        // TODO: Implement paste from clipboard
+    }
+
+    void ScoreView::gotoMeasure(int measureNumber) {
+        if (!m_score || m_score->staves.isEmpty()) return;
+
+        auto* staff = m_score->staves[0].get();
+        for (const auto& measure : staff->measures) {
+            if (measure->measureNumber() == measureNumber) {
+                // Scroll to measure
+                m_offsetX = -measure->xPosition * m_zoom;
+                updateTransform();
+                update();
+                break;
+            }
+        }
+    }
+
+    void ScoreView::gotoSelection() {
+        if (m_selectedNotes.isEmpty() && m_selectedMeasures.isEmpty()) return;
+
+        // Center on first selected item
+        if (!m_selectedMeasures.isEmpty()) {
+            m_offsetX = -m_selectedMeasures[0]->xPosition * m_zoom + width() / 2;
+        }
+        updateTransform();
+        update();
+    }
+
+    void ScoreView::pageUp() {
+        m_offsetY += height() * 0.8;
+        updateTransform();
+        update();
+    }
+
+    void ScoreView::pageDown() {
+        m_offsetY -= height() * 0.8;
+        updateTransform();
+        update();
+    }
+
+    void ScoreView::highlightPlayingNotes(const QVector<Note*>& notes) {
+        // Visual feedback for currently playing notes
+        m_selectedNotes = notes;
         update();
     }
 
     void ScoreView::paintEvent(QPaintEvent* event) {
+        Q_UNUSED(event)
         QPainter painter(this);
         painter.fillRect(rect(), Qt::white);
 
@@ -176,8 +402,11 @@ namespace Aegis {
         painter->setPen(Qt::NoPen);
 
         for (Note* note : m_selectedNotes) {
-            // Draw selection rectangle around note
-            // Simplified: just highlight
+            if (note->measure) {
+                double x = note->measure->xPosition + note->measure->tickToPixel(note->tickPosition);
+                double y = calculateNoteY(*note);  // Would need access to renderer
+                painter->drawRect(x - 10, y - 10, 20, 20);
+            }
         }
 
         painter->restore();
@@ -201,18 +430,26 @@ namespace Aegis {
 
         if (event->button() == Qt::LeftButton) {
             switch (m_currentTool) {
-                case EditTool::Select:
+                case EditTool::Select: {
                     // Select note or measure
                     if (Note* n = noteAt(scorePos)) {
-                        m_selectedNotes = {n};
+                        if (!(event->modifiers() & Qt::ControlModifier)) {
+                            m_selectedNotes.clear();
+                            m_selectedMeasures.clear();
+                        }
+                        m_selectedNotes.append(n);
                         emit noteSelected(n);
                     } else if (Measure* m = measureAt(scorePos)) {
-                        m_selectedMeasures = {m};
+                        if (!(event->modifiers() & Qt::ControlModifier)) {
+                            m_selectedNotes.clear();
+                            m_selectedMeasures.clear();
+                        }
+                        m_selectedMeasures.append(m);
                         m_currentMeasure = m;
                         emit measureSelected(m);
                     }
                     break;
-
+                }
                 case EditTool::NoteInput:
                     // Place note at position
                     if (Staff* s = staffAt(scorePos)) {
@@ -220,23 +457,31 @@ namespace Aegis {
                         m_currentMeasure = measureAt(scorePos);
                         if (m_currentMeasure) {
                             m_currentTick = tickAt(scorePos);
-                            // Calculate staff line from Y
-                            inputNote(PitchClass::C);  // Default, would calculate from Y
+                            // Calculate pitch from Y position
+                            inputNote(PitchClass::C);  // Simplified - would calculate from Y
                         }
                     }
                     break;
 
                 case EditTool::RestInput:
-                    inputRest();
+                    if (Measure* m = measureAt(scorePos)) {
+                        m_currentMeasure = m;
+                        m_currentTick = tickAt(scorePos);
+                        inputRest();
+                    }
                     break;
 
                 default:
                     break;
             }
+            emit selectionChanged();
             update();
         }
 
         m_dragStart = event->pos();
+        if (event->button() == Qt::LeftButton && m_currentTool == EditTool::Select) {
+            m_dragging = true;
+        }
     }
 
     void ScoreView::mouseMoveEvent(QMouseEvent* event) {
@@ -248,11 +493,18 @@ namespace Aegis {
     }
 
     void ScoreView::mouseReleaseEvent(QMouseEvent* event) {
+        Q_UNUSED(event)
         if (m_dragging) {
             m_dragging = false;
-            // Finalize selection
+            // Finalize selection from rectangle
+            m_selectionRect = QRectF();
             update();
         }
+    }
+
+    void ScoreView::mouseDoubleClickEvent(QMouseEvent* event) {
+        Q_UNUSED(event)
+        // Double-click to edit properties
     }
 
     void ScoreView::wheelEvent(QWheelEvent* event) {
@@ -291,6 +543,24 @@ namespace Aegis {
                 case Qt::Key_7: m_inputState.octave = 7; break;
                 case Qt::Key_8: m_inputState.octave = 8; break;
                 case Qt::Key_Period: m_inputState.toggleDot(); break;
+                case Qt::Key_Minus:
+                    if (m_inputState.accidental == Accidental::Flat) {
+                        m_inputState.accidental = Accidental::DoubleFlat;
+                    } else {
+                        m_inputState.accidental = Accidental::Flat;
+                    }
+                    break;
+                case Qt::Key_Equal:
+                case Qt::Key_Plus:
+                    if (m_inputState.accidental == Accidental::Sharp) {
+                        m_inputState.accidental = Accidental::DoubleSharp;
+                    } else {
+                        m_inputState.accidental = Accidental::Sharp;
+                    }
+                    break;
+                case Qt::Key_9:
+                    m_inputState.accidental = Accidental::Natural;
+                    break;
                 case Qt::Key_Escape: setEditTool(EditTool::Select); break;
                 default:
                     QWidget::keyPressEvent(event);
@@ -298,6 +568,13 @@ namespace Aegis {
             update();
         } else {
             QWidget::keyPressEvent(event);
+        }
+    }
+
+    void ScoreView::resizeEvent(QResizeEvent* event) {
+        QWidget::resizeEvent(event);
+        if (m_score) {
+            m_renderer.doLayout();
         }
     }
 
@@ -317,19 +594,45 @@ namespace Aegis {
 
     Note* ScoreView::noteAt(const QPointF& pos) {
         if (!m_score) return nullptr;
+
         // Hit test against note bounding boxes
-        // Simplified: return nullptr for now
+        for (auto& staff : m_score->staves) {
+            double staffY = staff->yPosition;
+            if (pos.y() < staffY || pos.y() > staffY + staff->height()) continue;
+
+            for (auto& measure : staff->measures) {
+                if (pos.x() < measure->xPosition || pos.x() > measure->xPosition + measure->width) continue;
+
+                for (auto& note : measure->notes) {
+                    double noteX = measure->xPosition + measure->tickToPixel(note.tickPosition);
+                    double noteY = staffY + 40; // Simplified - would calculate from pitch
+
+                    if (qAbs(pos.x() - noteX) < 20 && qAbs(pos.y() - noteY) < 20) {
+                        return &note;
+                    }
+                }
+            }
+        }
         return nullptr;
     }
 
     Measure* ScoreView::measureAt(const QPointF& pos) {
         if (!m_score || m_score->staves.isEmpty()) return nullptr;
+
         // Find measure by X coordinate
-        // Simplified
+        for (auto& staff : m_score->staves) {
+            for (auto& measure : staff->measures) {
+                if (pos.x() >= measure->xPosition && pos.x() < measure->xPosition + measure->width) {
+                    if (pos.y() >= staff->yPosition && pos.y() < staff->yPosition + staff->height()) {
+                        return measure.get();
+                    }
+                }
+            }
+        }
         return nullptr;
     }
 
-    Staff* ScoreView::score::staffAt(const QPointF& pos) {
+    Staff* ScoreView::staffAt(const QPointF& pos) {
         if (!m_score) return nullptr;
         return m_score->staffAtY(pos.y());
     }
@@ -337,7 +640,7 @@ namespace Aegis {
     int ScoreView::tickAt(const QPointF& pos, Measure** outMeasure) {
         if (Measure* m = measureAt(pos)) {
             if (outMeasure) *outMeasure = m;
-            return m->pixelToTick(pos.x());
+            return m->pixelToTick(pos.x() - m->xPosition);
         }
         return 0;
     }
@@ -359,11 +662,10 @@ namespace Aegis {
         setupUI();
         createActions();
         createToolbars();
+        connectSignals();
 
         newScore();
     }
-
-    NotationEditor::~NotationEditor() = default;
 
     void NotationEditor::setupUI() {
         QVBoxLayout* mainLayout = new QVBoxLayout(this);
@@ -381,12 +683,14 @@ namespace Aegis {
     }
 
     void NotationEditor::createActions() {
-        // File actions
-        // Edit actions
-        // View actions
-        // Playback actions
-
+        // Connect view signals
         connect(m_view, &ScoreView::selectionChanged, this, &NotationEditor::onViewSelectionChanged);
+        connect(m_view, &ScoreView::measureSelected, this, [this](Measure* m) {
+            emit statusMessage(tr("Measure %1 selected").arg(m ? m->measureNumber() : 0));
+        });
+        connect(m_view, &ScoreView::noteSelected, this, [this](Note* n) {
+            emit statusMessage(n ? tr("Note %1 selected").arg(n->pitch.toString()) : tr("No note"));
+        });
     }
 
     void NotationEditor::createToolbars() {
@@ -395,10 +699,19 @@ namespace Aegis {
 
         // Duration buttons
         QStringList durations = {"Whole", "Half", "Quarter", "Eighth", "16th", "32nd"};
+        QVector<Duration::Type> durTypes = {
+            Duration::Type::Whole,
+            Duration::Type::Half,
+            Duration::Type::Quarter,
+            Duration::Type::Eighth,
+            Duration::Type::Sixteenth,
+            Duration::Type::ThirtySecond
+        };
+
         for (int i = 0; i < durations.size(); ++i) {
             QPushButton* btn = new QPushButton(durations[i], this);
-            connect(btn, &QPushButton::clicked, [this, i]() {
-                setNoteDuration(static_cast<NoteDuration>(static_cast<int>(NoteDuration::Whole) + i));
+            connect(btn, &QPushButton::clicked, [this, durTypes, i]() {
+                setNoteDuration(durTypes[i]);
             });
             noteToolbar->addWidget(btn);
         }
@@ -414,6 +727,10 @@ namespace Aegis {
         connect(noteBtn, &QPushButton::clicked, [this]() { setTool(EditTool::NoteInput); });
         noteToolbar->addWidget(noteBtn);
 
+        QPushButton* restBtn = new QPushButton(tr("Rest Input"), this);
+        connect(restBtn, &QPushButton::clicked, [this]() { setTool(EditTool::RestInput); });
+        noteToolbar->addWidget(restBtn);
+
         // Playback controls
         noteToolbar->addSeparator();
 
@@ -425,7 +742,15 @@ namespace Aegis {
         connect(stopBtn, &QPushButton::clicked, this, &NotationEditor::stop);
         noteToolbar->addWidget(stopBtn);
 
-        // Add to parent widget's layout (would need proper parent)
+        // Add toolbar to layout
+        QVBoxLayout* layout = qobject_cast<QVBoxLayout*>(this->layout());
+        if (layout) {
+            layout->insertWidget(0, noteToolbar);
+        }
+    }
+
+    void NotationEditor::connectSignals() {
+        connect(&m_playbackTimer, &QTimer::timeout, this, &NotationEditor::onPlaybackTimer);
     }
 
     bool NotationEditor::newScore(const QString& title) {
@@ -434,11 +759,15 @@ namespace Aegis {
 
         // Create default staff
         Staff* staff = m_score->addStaff(tr("Piano"));
-        staff->setDefaultClef(Clef{ClefType::Treble});
+        Clef trebleClef;
+        trebleClef.type = ClefType::Treble;
+        staff->setDefaultClef(trebleClef);
 
-        // Add empty measure
+        // Add empty measure with default time signature
         Measure* m = staff->addMeasure(1);
-        m->timeSigs.append(m_score->defaultTimeSignature());
+        TimeSignature ts;
+        m->timeSigs.append(ts);
+        m->setLengthTicks(ts.numerator * (480 * 4 / ts.denominator));
 
         m_view->setScore(m_score.get());
         setModified(false);
@@ -449,35 +778,33 @@ namespace Aegis {
     }
 
     bool NotationEditor::openScore(const QString& path) {
-        if (path.endsWith(".xml") || path.endsWith(".musicxml")) {
-            m_score = std::make_unique<Score>(this);
-            if (!m_score->loadMusicXML(path)) {
-                QMessageBox::critical(this, tr("Error"), tr("Failed to load MusicXML file"));
-                return false;
-            }
-        } else if (path.endsWith(".mid") || path.endsWith(".midi")) {
-            m_score = std::make_unique<Score>(this);
-            if (!m_score->loadMIDI(path)) {
-                QMessageBox::critical(this, tr("Error"), tr("Failed to load MIDI file"));
-                return false;
-            }
-        } else {
-            QMessageBox::critical(this, tr("Error"), tr("Unsupported file format"));
-            return false;
-        }
+        m_score = std::make_unique<Score>(this);
+        bool loaded = false;
 
-        m_filePath = path;
-        m_view->setScore(m_score.get());
-        setModified(false);
-        updateWindowTitle();
+        if (path.endsWith(".xml", Qt::CaseInsensitive) ||
+            path.endsWith(".musicxml", Qt::CaseInsensitive)) {
+            loaded = m_score->loadMusicXML(path);
+            } else if (path.endsWith(".mid", Qt::CaseInsensitive) ||
+                path.endsWith(".midi", Qt::CaseInsensitive)) {
+                loaded = m_score->loadMIDI(path);
+                }
 
-        return true;
+                if (!loaded) {
+                    QMessageBox::critical(this, tr("Error"), tr("Failed to load file: %1").arg(path));
+                    return false;
+                }
+
+                m_filePath = path;
+            m_view->setScore(m_score.get());
+            setModified(false);
+            updateWindowTitle();
+
+            return true;
     }
 
     bool NotationEditor::saveScore(const QString& path) {
         QString savePath = path.isEmpty() ? m_filePath : path;
         if (savePath.isEmpty()) {
-            // Show save dialog
             savePath = QFileDialog::getSaveFileName(this, tr("Save Score"), QString(),
                                                     tr("MusicXML files (*.xml);;All files (*)"));
             if (savePath.isEmpty()) return false;
@@ -494,30 +821,32 @@ namespace Aegis {
         return true;
     }
 
+    bool NotationEditor::exportScore(const QString& path, const QString& format) {
+        if (!m_score) return false;
+
+        if (format.compare("midi", Qt::CaseInsensitive) == 0 ||
+            format.compare("mid", Qt::CaseInsensitive) == 0) {
+            return m_score->saveMIDI(path);
+            }
+            return false;
+    }
+
     void NotationEditor::play() {
-        if (!m_score || !m_audioEngine) return;
+        if (!m_score) return;
 
         preparePlayback();
 
         m_playing = true;
         m_playbackStartTick = 0;
-        m_playbackTimer.start();
+        m_playbackStartTime = QTime::currentTime();
+        m_playbackTimer.start(50);
 
         emit playbackStateChanged(true);
-
-        if (m_audioOutput) {
-            m_audioOutput->start();
-        }
     }
 
     void NotationEditor::pause() {
         m_playing = false;
         m_playbackTimer.stop();
-
-        if (m_audioOutput) {
-            m_audioOutput->stop();
-        }
-
         emit playbackStateChanged(false);
     }
 
@@ -525,42 +854,92 @@ namespace Aegis {
         m_playing = false;
         m_playbackTimer.stop();
         m_view->setPlaybackPosition(-1);
-
         stopPlayback();
-
-        if (m_audioOutput) {
-            m_audioOutput->stop();
-        }
-
         emit playbackStateChanged(false);
     }
 
-    void NotationEditor::preparePlayback() {
-        // Convert score to audio/MIDI events
-        // This would generate PCM data or MIDI events for the AudioEngine
+    void NotationEditor::togglePlay() {
+        if (m_playing) {
+            pause();
+        } else {
+            play();
+        }
+    }
 
+    void NotationEditor::seek(int tick) {
+        m_playbackStartTick = tick;
+        m_view->setPlaybackPosition(tick);
+    }
+
+    void NotationEditor::setLoop(int startTick, int endTick) {
+        m_loopStartTick = startTick;
+        m_loopEndTick = endTick;
+    }
+
+    void NotationEditor::clearLoop() {
+        m_loopStartTick = -1;
+        m_loopEndTick = -1;
+    }
+
+    void NotationEditor::undo() {
+        m_undoStack->undo();
+        setModified(m_undoStack->isClean());
+    }
+
+    void NotationEditor::redo() {
+        m_undoStack->redo();
+        setModified(m_undoStack->isClean());
+    }
+
+    bool NotationEditor::canUndo() const {
+        return m_undoStack->canUndo();
+    }
+
+    bool NotationEditor::canRedo() const {
+        return m_undoStack->canRedo();
+    }
+
+    void NotationEditor::setTool(EditTool tool) {
+        m_view->setEditTool(tool);
+    }
+
+    void NotationEditor::setNoteDuration(Duration::Type dur) {
+        m_view->setInputDuration(dur);
+    }
+
+    void NotationEditor::toggleDot() {
+        m_view->inputState().toggleDot();
+    }
+
+    void NotationEditor::toggleTie() {
+        m_view->toggleTie();
+    }
+
+    void NotationEditor::toggleSlur() {
+        m_view->toggleSlur();
+    }
+
+    void NotationEditor::setAccidental(Accidental acc) {
+        m_view->inputState().accidental = acc;
+    }
+
+    void NotationEditor::setArticulation(Articulation art) {
+        m_view->addArticulation(art);
+    }
+
+    void NotationEditor::addDynamic(int dynValue) {
+        // Apply dynamic to selected notes
+        if (!m_view->hasSelection()) return;
+
+        // TODO: Implement dynamic marking
+        Q_UNUSED(dynValue)
+    }
+
+    void NotationEditor::preparePlayback() {
         if (!m_score) return;
 
-        // Simplified: create a basic sine wave for each note
-        // In real implementation, would use AudioEngine's synthesis capabilities
-        // or sample playback
-
-        m_audioBuffer.clear();
-        int sampleRate = m_audioOutput ? m_audioOutput->sampleRate() : 48000;
-
-        // Calculate total duration
-        double totalSeconds = m_score->totalTicks() / 480.0 * (60.0 / 120.0);  // At 120 BPM
-        int totalSamples = static_cast<int>(totalSeconds * sampleRate) * 2;  // Stereo
-
-        m_audioBuffer.resize(totalSamples * sizeof(float));
-        float* samples = reinterpret_cast<float*>(m_audioBuffer.data());
-
-        // Generate audio (simplified placeholder)
-        // Real implementation would use proper synthesis
-        for (int i = 0; i < totalSamples; ++i) {
-            samples[i] = 0.0f;  // Silence for now
-        }
-
+        // Generate audio buffer for playback
+        m_audioBuffer = m_score->renderToPCM(48000);
         m_audioBufferPos = 0;
     }
 
@@ -569,18 +948,23 @@ namespace Aegis {
     }
 
     void NotationEditor::onPlaybackTimer() {
-        if (!m_playing) return;
+        if (!m_playing || !m_score) return;
 
         // Update playback position
-        int elapsedMs = QTime::currentTime().msecsSinceStartOfDay() - m_playbackStartTime;
+        int elapsedMs = m_playbackStartTime.msecsTo(QTime::currentTime());
         double seconds = elapsedMs / 1000.0;
-        int tick = static_cast<int>(seconds * 480 * (120.0 / 60.0));  // At 120 BPM
+        double tempo = m_score->tempo() > 0 ? m_score->tempo() : 120.0;
+        int tick = m_playbackStartTick + static_cast<int>(seconds * 480 * (tempo / 60.0));
 
+        // Handle looping
         if (m_loopEndTick > 0 && tick >= m_loopEndTick) {
             tick = m_loopStartTick;
-            // Reset audio
+            m_playbackStartTick = tick;
+            m_playbackStartTime = QTime::currentTime();
+            emit aboutToLoop();
         }
 
+        // Check end of score
         if (tick >= m_score->totalTicks()) {
             stop();
             return;
@@ -589,16 +973,12 @@ namespace Aegis {
         m_view->setPlaybackPosition(tick);
     }
 
-    void NotationEditor::setTool(EditTool tool) {
-        m_view->setEditTool(tool);
+    void NotationEditor::onAudioEngineFinished() {
+        stop();
     }
 
-    void NotationEditor::setNoteDuration(NoteDuration dur) {
-        m_view->setInputDuration(dur);
-    }
-
-    void NotationEditor::toggleDot() {
-        m_view->inputState().toggleDot();
+    void NotationEditor::onViewSelectionChanged() {
+        emit selectionChanged();
     }
 
     void NotationEditor::setModified(bool modified) {
@@ -609,11 +989,10 @@ namespace Aegis {
     void NotationEditor::updateWindowTitle() {
         QString title = m_score ? m_score->title() : tr("No Score");
         if (m_modified) title.prepend("* ");
-        // Would set parent window title
-    }
-
-    void NotationEditor::onViewSelectionChanged() {
-        emit selectionChanged();
+        if (!m_filePath.isEmpty()) {
+            title += " - " + m_filePath;
+        }
+        emit statusMessage(title);
     }
 
     // =============================================================================
@@ -624,7 +1003,7 @@ namespace Aegis {
     : QObject(parent), m_editor(editor) {
 
         // Initialize key map (computer keyboard to pitch)
-        // Like MuseScore: ASDFGHJK map to white keys
+        // Like MuseScore: ASDFGHJK map to white keys, WETYU map to black keys
         m_keyMap[Qt::Key_A] = PitchClass::C;
         m_keyMap[Qt::Key_W] = PitchClass::CSharp;
         m_keyMap[Qt::Key_S] = PitchClass::D;
@@ -650,7 +1029,8 @@ namespace Aegis {
             if (modifiers & Qt::ShiftModifier) octave++;
             if (modifiers & Qt::ControlModifier) octave--;
 
-            emit noteEntered(Pitch(pc, octave), Duration());
+            Pitch pitch(pc, octave);
+            emit noteEntered(pitch, Duration());
             return true;
         }
 
@@ -677,6 +1057,15 @@ namespace Aegis {
         if (m_activeMidiNotes.isEmpty()) {
             // All notes released - commit chord or single note
         }
+    }
+
+    // =============================================================================
+    // PaletteWidget Implementation
+    // =============================================================================
+
+    PaletteWidget::PaletteWidget(QWidget* parent)
+    : QWidget(parent) {
+        // TODO: Implement palette UI with notation elements
     }
 
 } // namespace Aegis

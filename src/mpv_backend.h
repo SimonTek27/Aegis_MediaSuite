@@ -1,7 +1,7 @@
 // mpv_backend.h - Concrete implementation
 #pragma once
 
-#include "audio.h"              // replaces old audio_backend.h
+#include "core.h"          // for AudioBackend, PlaybackState, TrackMetadata
 #include "raii_wrappers.h"
 #include <QTimer>
 
@@ -30,17 +30,19 @@ namespace Aegis {
             m_audioCallback = std::move(cb);
         }
 
+    private slots:
+        void handleEvent();
+
     private:
         void initMpv();
         static void mpvWakeup(void* ctx);
-        void handleEvent();
         void updateMetadata();
 
         MpvHandlePtr m_mpv;
         QTimer m_posTimer;
         std::atomic<PlaybackState> m_state{PlaybackState::Stopped};
-        std::atomic<double> m_position{0};
-        std::atomic<double> m_duration{0};
+        std::atomic<double> m_position{0.0};
+        std::atomic<double> m_duration{0.0};
         std::atomic<bool> m_hasVideo{false};
         TrackMetadata m_metadata;
         std::function<void(const QByteArray&, int)> m_audioCallback;
