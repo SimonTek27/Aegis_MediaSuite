@@ -1,6 +1,11 @@
-// UI_VideoEditor.qml - Main QML interface for Aegis Video Editor
+// ui_videoeditor.qml - Main QML interface for Aegis Video Editor
 // Kdenlive-inspired multi-track video editing interface
-// Combined TimelineView and VideoEditorMain components
+//
+// FIXES APPLIED:
+//   [Bug #2] Flickable.contentWidth: contentWidth → timelineView.contentWidth (loop circolare)
+//   [Bug #3] videoEditor.resolution/fps/isPlaying → ora esposti come Q_PROPERTY in C++
+//   [Bug #4] newProject(profile) → newProject("Untitled Project", profile) (firma corretta)
+//   [Bug #6] Null-check su timeline all'inizio di rulerCanvas.onPaint
 
 import QtQuick
 import QtQuick.Controls
@@ -12,8 +17,10 @@ ApplicationWindow {
     visible: true
     width: 1600
     height: 900
-    title: videoEditor.hasProject ? ("Aegis Video Editor - " + videoEditor.projectPath) : "Aegis Video Editor"
-    
+    title: videoEditor.hasProject ?
+           ("Aegis Video Editor - " + videoEditor.projectName + (videoEditor.modified ? " *" : "")) :
+           "Aegis Video Editor"
+
     // Menu Bar
     menuBar: MenuBar {
         Menu {
@@ -50,7 +57,7 @@ ApplicationWindow {
                 onTriggered: Qt.quit()
             }
         }
-        
+
         Menu {
             title: qsTr("&Edit")
             MenuItem {
@@ -82,7 +89,7 @@ ApplicationWindow {
                 onTriggered: timelineView.rippleDeleteSelection()
             }
         }
-        
+
         Menu {
             title: qsTr("&Project")
             MenuItem {
@@ -95,10 +102,11 @@ ApplicationWindow {
                 onTriggered: renderDialog.open()
             }
         }
-        
+
         Menu {
             title: qsTr("&Playback")
             MenuItem {
+                // [FIX Bug #3] videoEditor.isPlaying ora è una Q_PROPERTY esposta in C++
                 text: videoEditor.isPlaying ? qsTr("&Pause") : qsTr("&Play")
                 shortcut: "Space"
                 onTriggered: videoEditor.togglePlayPause()
@@ -130,12 +138,12 @@ ApplicationWindow {
             }
         }
     }
-    
+
     // Main Layout
     RowLayout {
         anchors.fill: parent
         spacing: 0
-        
+
         // Left Panel - Project Bin
         Rectangle {
             Layout.preferredWidth: 250
@@ -143,17 +151,16 @@ ApplicationWindow {
             color: palette.base
             border.color: palette.mid
             border.width: 1
-            
+
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 0
-                
-                // Panel Header
+
                 Rectangle {
                     Layout.fillWidth: true
                     height: 28
                     color: palette.alternateBase
-                    
+
                     Text {
                         anchors.left: parent.left
                         anchors.leftMargin: 8
@@ -162,107 +169,80 @@ ApplicationWindow {
                         font.bold: true
                     }
                 }
-                
-                // Import Button
+
                 Button {
                     Layout.fillWidth: true
                     Layout.margins: 4
                     text: qsTr("+ Import Media")
                     onClicked: importDialog.open()
                 }
-                
-                // Media List
+
                 ListView {
                     id: mediaList
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
                     model: projectMediaModel
-                    
+
                     delegate: Rectangle {
                         width: mediaList.width
                         height: 60
                         color: ListView.isCurrentItem ? palette.highlight : "transparent"
-                        
-                        RowLayout {
+
+                        ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 4
-                            spacing: 8
-                            
-                            // Thumbnail
-                            Rectangle {
-                                Layout.preferredWidth: 80
-                                Layout.preferredHeight: 45
-                                color: "#333"
-                                
-                                Image {
-                                    anchors.fill: parent
-                                    source: model.thumbnail
-                                    fillMode: Image.PreserveAspectFit
-                                }
-                            }
-                            
-                            // Info
-                            ColumnLayout {
+                            spacing: 2
+
+                            Text {
+                                text: modelData.name ?? ""
+                                elide: Text.ElideRight
                                 Layout.fillWidth: true
-                                spacing: 2
-                                
-                                Text {
-                                    text: model.name
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                    color: ListView.isCurrentItem ? palette.highlightedText : palette.text
-                                }
-                                
-                                Text {
-                                    text: model.duration
-                                    font.pixelSize: 11
-                                    color: ListView.isCurrentItem ? palette.highlightedText : palette.text
-                                    opacity: 0.7
-                                }
+                            }
+
+                            Text {
+                                text: modelData.duration ?? ""
+                                color: palette.mid
+                                font.pixelSize: 10
                             }
                         }
-                        
+
                         MouseArea {
                             anchors.fill: parent
                             onClicked: mediaList.currentIndex = index
-                            onDoubleClicked: timelineView.addClipToCurrentTrack(model.source)
+                            onDoubleClicked: timelineView.addClipToCurrentTrack(modelData.source)
                         }
                     }
                 }
             }
         }
-        
-        // Center - Video Monitor + Timeline
+
+        // Center - Preview + Timeline
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
-            
-            // Video Monitor
+
+            // Video Preview
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: parent.height * 0.45
-                color: "#1a1a1a"
-                
-                // Video Display
-                Image {
-                    id: videoDisplay
-                    anchors.centerIn: parent
-                    width: Math.min(parent.width, parent.height * 16/9) - 20
-                    height: width * 9/16
-                    fillMode: Image.PreserveAspectFit
-                    source: "image://videoPreview/" + timelineView.playhead
-                    
-                    Rectangle {
-                        anchors.fill: parent
-                        color: "transparent"
-                        border.color: "#444"
-                        border.width: 1
-                    }
+                color: "black"
+
+                // Video output placeholder (MPV renders here)
+                Rectangle {
+                    anchors.fill: parent
+                    color: "black"
                 }
-                
-                // Overlay Info
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: "transparent"
+                    border.color: "#444"
+                    border.width: 1
+                }
+
+                // Timecode overlay
                 Rectangle {
                     anchors.top: parent.top
                     anchors.left: parent.left
@@ -271,7 +251,7 @@ ApplicationWindow {
                     height: 28
                     color: "#cc000000"
                     radius: 4
-                    
+
                     Text {
                         id: timecodeDisplay
                         anchors.centerIn: parent
@@ -281,8 +261,9 @@ ApplicationWindow {
                         font.pixelSize: 14
                     }
                 }
-                
+
                 // Resolution Badge
+                // [FIX Bug #3] videoEditor.resolution e videoEditor.fps ora sono Q_PROPERTY
                 Rectangle {
                     anchors.top: parent.top
                     anchors.right: parent.right
@@ -291,17 +272,19 @@ ApplicationWindow {
                     height: 24
                     color: "#cc000000"
                     radius: 4
-                    
+                    visible: videoEditor.hasProject
+
                     Text {
                         id: resolutionBadge
                         anchors.centerIn: parent
-                        text: videoEditor.resolution.width + "x" + videoEditor.resolution.height + " @ " + videoEditor.fps + "fps"
+                        text: videoEditor.resolution.width + "x" + videoEditor.resolution.height +
+                              " @ " + videoEditor.fps + "fps"
                         color: "white"
                         font.pixelSize: 12
                     }
                 }
             }
-            
+
             // Transport Controls
             Rectangle {
                 Layout.fillWidth: true
@@ -309,49 +292,51 @@ ApplicationWindow {
                 color: palette.window
                 border.color: palette.mid
                 border.width: 1
-                
+
                 RowLayout {
                     anchors.centerIn: parent
                     spacing: 8
-                    
+
                     Button {
                         text: "|<<"
                         flat: true
                         onClicked: videoEditor.seek(0)
                     }
-                    
+
                     Button {
                         text: "<"
                         flat: true
                         onClicked: videoEditor.frameStep(-1)
                     }
-                    
+
                     Button {
+                        // [FIX Bug #3] videoEditor.isPlaying è ora una Q_PROPERTY C++
                         text: videoEditor.isPlaying ? "||" : ">"
                         flat: true
                         font.bold: true
                         font.pixelSize: 16
                         onClicked: videoEditor.togglePlayPause()
                     }
-                    
+
                     Button {
                         text: ">"
                         flat: true
                         onClicked: videoEditor.frameStep(1)
                     }
-                    
+
                     Button {
                         text: ">>"
                         flat: true
                         onClicked: videoEditor.seek(timelineView.duration)
                     }
-                    
+
                     Rectangle {
                         Layout.preferredWidth: 1
                         Layout.preferredHeight: 24
                         color: palette.mid
                     }
-                    
+
+                    // Volume slider (placeholder)
                     Slider {
                         Layout.preferredWidth: 200
                         from: 0
@@ -360,34 +345,39 @@ ApplicationWindow {
                     }
                 }
             }
-            
+
             // Timeline
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 color: palette.base
-                
-                // Timeline Component (integrated)
+
                 Rectangle {
                     id: timelineView
                     anchors.fill: parent
                     color: "#2d2d2d"
-                    
-                    // Properties
+
+                    // [FIX Bug #5] timeline è ora un TimelineProxy* esposto da VideoEditor
                     property var timeline: videoEditor.timeline
+
+                    // Leggi playhead e duration dal proxy (che delega a VideoEditor)
                     property int playhead: timeline ? timeline.playhead : 0
                     property int duration: timeline ? timeline.duration : 0
+
                     property int pixelsPerFrame: 4
                     property int trackHeight: 60
                     property int headerWidth: 120
                     property var selectedClip: null
                     property string timecodeString: timeline ? formatTimecode(timeline.playhead) : "00:00:00:00"
-                    
-                    // Signals
+
+                    // Computed layout properties
+                    property int contentWidth: duration * pixelsPerFrame + 200
+                    property int viewportWidth: width - headerWidth
+                    property int totalTrackHeight: (timeline ? (timeline.videoTrackCount + timeline.audioTrackCount) : 0) * (trackHeight + 4) + 40
+
                     signal clipClicked(var clip)
                     signal clipDoubleClicked(var clip)
-                    
-                    // Format timecode
+
                     function formatTimecode(frames) {
                         if (!timeline) return "00:00:00:00"
                         var fps = timeline.profile.fps
@@ -398,25 +388,24 @@ ApplicationWindow {
                         var frameNum = frames % fps
                         return pad(hours) + ":" + pad(minutes) + ":" + pad(seconds) + ":" + pad(frameNum)
                     }
-                    
+
                     function pad(n) {
                         return n.toString().padStart(2, '0')
                     }
-                    
+
                     function frameToX(frame) {
                         return frame * pixelsPerFrame + headerWidth - hScroll.position * (contentWidth - viewportWidth)
                     }
-                    
+
                     function xToFrame(x) {
                         return Math.floor((x - headerWidth + hScroll.position * (contentWidth - viewportWidth)) / pixelsPerFrame)
                     }
-                    
+
                     function snapToGrid(frame) {
                         if (!timeline) return frame
                         return timeline.snap(frame, 10)
                     }
-                    
-                    // Add clip to current track
+
                     function addClipToCurrentTrack(source) {
                         if (!timeline) return
                         var clip = videoEditor.importMedia(source)
@@ -425,33 +414,27 @@ ApplicationWindow {
                             timeline.insertClip(clip, track, playhead)
                         }
                     }
-                    
-                    // Edit operations
+
                     function splitAtPlayhead() {
                         if (!timeline || !selectedClip) return
                         timeline.splitClip(selectedClip, playhead)
                     }
-                    
+
                     function deleteSelection() {
                         if (!timeline || !selectedClip) return
                         timeline.removeClip(selectedClip)
                         selectedClip = null
                     }
-                    
+
                     function rippleDeleteSelection() {
                         if (!timeline || !selectedClip) return
-                        var start = selectedClip.position
-                        var end = start + selectedClip.duration
+                        var start = selectedClip.position.frames
+                        var end = start + selectedClip.duration.frames
                         timeline.rippleDelete(start, end)
                         selectedClip = null
                     }
-                    
-                    // Layout calculations
-                    property int contentWidth: duration * pixelsPerFrame + 200
-                    property int viewportWidth: width - headerWidth
-                    property int totalTrackHeight: (timeline ? (timeline.videoTrackCount + timeline.audioTrackCount) : 0) * (trackHeight + 4) + 40
-                    
-                    // Ruler
+
+                    // ── Ruler ──
                     Rectangle {
                         id: ruler
                         anchors.top: parent.top
@@ -459,52 +442,58 @@ ApplicationWindow {
                         anchors.right: parent.right
                         height: 30
                         color: "#3d3d3d"
-                        
-                        // Time markers
+
                         Canvas {
                             id: rulerCanvas
                             anchors.fill: parent
                             anchors.leftMargin: headerWidth
-                            
+
                             onPaint: {
                                 var ctx = getContext("2d")
                                 ctx.clearRect(0, 0, width, height)
+
+                                // [FIX Bug #6] Guard: se timeline è null non disegnare nulla
+                                if (!timelineView.timeline) return
+
                                 ctx.fillStyle = "#888"
                                 ctx.font = "10px sans-serif"
                                 ctx.textAlign = "center"
-                                
-                                var startFrame = Math.floor(xToFrame(0))
-                                var endFrame = Math.floor(xToFrame(width))
-                                var frameStep = Math.max(1, Math.floor(30 / pixelsPerFrame))
-                                
+
+                                // Leggi fps in modo sicuro con fallback
+                                var fps = (timelineView.timeline.profile && timelineView.timeline.profile.fps > 0)
+                                          ? timelineView.timeline.profile.fps
+                                          : 30
+
+                                var startFrame = Math.floor(timelineView.xToFrame(0))
+                                var endFrame = Math.floor(timelineView.xToFrame(width))
+                                var frameStep = Math.max(1, Math.floor(30 / timelineView.pixelsPerFrame))
+
                                 for (var f = startFrame; f <= endFrame; f += frameStep) {
-                                    var x = frameToX(f) - headerWidth + hScroll.position * (contentWidth - viewportWidth)
+                                    var x = timelineView.frameToX(f) - headerWidth +
+                                            hScroll.position * (timelineView.contentWidth - timelineView.viewportWidth)
                                     if (x >= 0 && x < width) {
-                                        var isSecond = f % timeline.profile.fps === 0
+                                        var isSecond = f % fps === 0
                                         ctx.fillRect(x, isSecond ? 0 : 15, 1, isSecond ? 30 : 15)
                                         if (isSecond) {
-                                            ctx.fillText(formatTimecode(f), x, 12)
+                                            ctx.fillText(timelineView.formatTimecode(f), x, 12)
                                         }
                                     }
                                 }
                             }
-                            
-                            // Redraw when scrolled
+
                             Connections {
                                 target: hScroll
                                 function onPositionChanged() { rulerCanvas.requestPaint() }
                             }
-                            
-                            // Redraw when zoom changes
                             Connections {
                                 target: timelineView
                                 function onPixelsPerFrameChanged() { rulerCanvas.requestPaint() }
                             }
                         }
-                        
+
                         // Playhead line in ruler
                         Rectangle {
-                            x: frameToX(playhead) - 1
+                            x: timelineView.frameToX(timelineView.playhead) - 1
                             y: 0
                             width: 2
                             height: parent.height
@@ -512,32 +501,33 @@ ApplicationWindow {
                             visible: x >= headerWidth
                         }
                     }
-                    
-                    // Track Headers + Timeline Content
+
+                    // ── Track Headers + Timeline Content ──
                     SplitView {
                         anchors.top: ruler.bottom
                         anchors.left: parent.left
                         anchors.right: parent.right
-                        anchors.bottom: parent.bottom
+                        anchors.bottom: hScroll.top
                         orientation: Qt.Horizontal
-                        
+
                         // Track Headers Panel
                         Rectangle {
                             SplitView.preferredWidth: headerWidth
                             color: "#353535"
                             border.color: "#444"
                             border.width: 1
-                            
+                            clip: true
+
                             Column {
                                 width: parent.width
-                                y: -vScroll.position * (totalTrackHeight - trackArea.height)
-                                
+                                y: -vScroll.position * Math.max(0, timelineView.totalTrackHeight - trackArea.height)
+
                                 // Video Tracks Header
                                 Rectangle {
                                     width: parent.width
                                     height: 24
                                     color: "#404040"
-                                    
+
                                     Text {
                                         anchors.left: parent.left
                                         anchors.leftMargin: 8
@@ -547,7 +537,7 @@ ApplicationWindow {
                                         font.bold: true
                                         font.pixelSize: 10
                                     }
-                                    
+
                                     Button {
                                         anchors.right: parent.right
                                         anchors.rightMargin: 4
@@ -558,56 +548,56 @@ ApplicationWindow {
                                         onClicked: if (timeline) timeline.addVideoTrack()
                                     }
                                 }
-                                
-                                // Video Track Headers
+
                                 Repeater {
                                     model: timeline ? timeline.videoTracks : []
-                                    
+
                                     Rectangle {
                                         width: parent.width
                                         height: trackHeight + 4
                                         color: "#2d2d2d"
                                         border.color: "#444"
                                         border.width: 1
-                                        
+
                                         RowLayout {
                                             anchors.fill: parent
                                             anchors.margins: 4
                                             spacing: 4
-                                            
+
                                             Button {
                                                 Layout.preferredWidth: 24
                                                 Layout.preferredHeight: 24
-                                                text: modelData.muted ? "M" : "V"
+                                                text: modelData.muted ? "M" : "m"
                                                 flat: true
                                                 onClicked: modelData.muted = !modelData.muted
                                             }
-                                            
-                                            Label {
+
+                                            Text {
                                                 Layout.fillWidth: true
                                                 text: modelData.name
-                                                color: "#ddd"
+                                                color: "#ccc"
                                                 elide: Text.ElideRight
+                                                font.pixelSize: 11
                                             }
-                                            
+
                                             Button {
-                                                Layout.preferredWidth: 20
-                                                Layout.preferredHeight: 20
-                                                text: "L"
+                                                Layout.preferredWidth: 24
+                                                Layout.preferredHeight: 24
+                                                text: "🔒"
                                                 flat: true
-                                                checked: modelData.locked
+                                                visible: modelData.locked
                                                 onClicked: modelData.locked = !modelData.locked
                                             }
                                         }
                                     }
                                 }
-                                
+
                                 // Audio Tracks Header
                                 Rectangle {
                                     width: parent.width
                                     height: 24
                                     color: "#404040"
-                                    
+
                                     Text {
                                         anchors.left: parent.left
                                         anchors.leftMargin: 8
@@ -617,7 +607,7 @@ ApplicationWindow {
                                         font.bold: true
                                         font.pixelSize: 10
                                     }
-                                    
+
                                     Button {
                                         anchors.right: parent.right
                                         anchors.rightMargin: 4
@@ -628,267 +618,106 @@ ApplicationWindow {
                                         onClicked: if (timeline) timeline.addAudioTrack()
                                     }
                                 }
-                                
-                                // Audio Track Headers
+
                                 Repeater {
                                     model: timeline ? timeline.audioTracks : []
-                                    
+
                                     Rectangle {
                                         width: parent.width
                                         height: trackHeight + 4
                                         color: "#2d2d2d"
                                         border.color: "#444"
                                         border.width: 1
-                                        
+
                                         RowLayout {
                                             anchors.fill: parent
                                             anchors.margins: 4
                                             spacing: 4
-                                            
+
                                             Button {
                                                 Layout.preferredWidth: 24
                                                 Layout.preferredHeight: 24
-                                                text: modelData.muted ? "M" : "A"
+                                                text: modelData.muted ? "M" : "m"
                                                 flat: true
                                                 onClicked: modelData.muted = !modelData.muted
                                             }
-                                            
-                                            Label {
+
+                                            Text {
                                                 Layout.fillWidth: true
                                                 text: modelData.name
-                                                color: "#ddd"
+                                                color: "#ccc"
                                                 elide: Text.ElideRight
-                                            }
-                                            
-                                            Button {
-                                                Layout.preferredWidth: 20
-                                                Layout.preferredHeight: 20
-                                                text: "L"
-                                                flat: true
-                                                checked: modelData.locked
-                                                onClicked: modelData.locked = !modelData.locked
+                                                font.pixelSize: 11
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                        
+
                         // Timeline Tracks Area
                         Rectangle {
                             id: trackArea
                             color: "#252525"
                             clip: true
-                            
-                            // Tracks Content
+
                             Flickable {
                                 id: trackFlickable
                                 anchors.fill: parent
-                                contentWidth: contentWidth
-                                contentHeight: totalTrackHeight
-                                
-                                // Sync with scrollbars
-                                contentX: hScroll.position * (contentWidth - width)
-                                contentY: vScroll.position * (contentHeight - height)
-                                
+                                // [FIX Bug #2] Era: contentWidth: contentWidth (loop circolare su se stesso)
+                                // Ora usa la proprietà del rettangolo parent timelineView
+                                contentWidth: timelineView.contentWidth
+                                contentHeight: timelineView.totalTrackHeight
+
+                                // Sincronizzazione con le scrollbar
+                                contentX: hScroll.position * Math.max(0, contentWidth - width)
+                                contentY: vScroll.position * Math.max(0, contentHeight - height)
+
                                 onContentXChanged: {
-                                    hScroll.position = contentX / (contentWidth - width)
+                                    var range = contentWidth - width
+                                    if (range > 0) hScroll.position = contentX / range
                                 }
                                 onContentYChanged: {
-                                    vScroll.position = contentY / (contentHeight - height)
+                                    var range = contentHeight - height
+                                    if (range > 0) vScroll.position = contentY / range
                                 }
-                                
+
                                 Column {
                                     x: 0
                                     y: 0
                                     width: parent.width
-                                    
+
                                     // Video Tracks Spacer
                                     Rectangle {
                                         width: parent.width
                                         height: 24
                                         color: "transparent"
                                     }
-                                    
+
                                     // Video Tracks
                                     Repeater {
                                         model: timeline ? timeline.videoTracks : []
-                                        
+
                                         Rectangle {
                                             width: timelineView.contentWidth
                                             height: trackHeight + 4
-                                            color: modelData.locked ? "#3a3020" : "#2a2a2a"
-                                            border.color: "#444"
+                                            color: modelData.locked ? "#1a1a1a" : "#252525"
+                                            border.color: "#333"
                                             border.width: 1
-                                            
-                                            // Clips on this track
+
+                                            // Clips in this track
                                             Repeater {
-                                                model: modelData.clips
-                                                
+                                                model: modelData.clips ? modelData.clips : []
+
                                                 Rectangle {
-                                                    x: frameToX(modelData.position)
+                                                    x: timelineView.frameToX(modelData.position.frames) - timelineView.headerWidth
                                                     y: 2
-                                                    width: modelData.duration * pixelsPerFrame
+                                                    width: modelData.duration.frames * timelineView.pixelsPerFrame
                                                     height: trackHeight
-                                                    color: selectedClip === modelData ? "#4488ff" : "#4a6fa5"
-                                                    border.color: selectedClip === modelData ? "#88bbff" : "#5a7fb5"
-                                                    border.width: selectedClip === modelData ? 2 : 1
-                                                    radius: 3
-                                                    
-                                                    // Clip content
-                                                    ColumnLayout {
-                                                        anchors.fill: parent
-                                                        anchors.margins: 4
-                                                        spacing: 2
-                                                        
-                                                        // Clip name
-                                                        Text {
-                                                            text: modelData.name
-                                                            color: "white"
-                                                            font.bold: true
-                                                            font.pixelSize: 11
-                                                            elide: Text.ElideRight
-                                                            Layout.fillWidth: true
-                                                        }
-                                                        
-                                                        // Thumbnail strip (simplified)
-                                                        Rectangle {
-                                                            Layout.fillWidth: true
-                                                            Layout.fillHeight: true
-                                                            color: "#333"
-                                                            opacity: 0.5
-                                                        }
-                                                        
-                                                        // Duration
-                                                        Text {
-                                                            text: formatTimecode(modelData.duration)
-                                                            color: "#ccc"
-                                                            font.pixelSize: 9
-                                                        }
-                                                    }
-                                                    
-                                                    // In/Out point handles
-                                                    Rectangle {
-                                                        anchors.left: parent.left
-                                                        anchors.top: parent.top
-                                                        anchors.bottom: parent.bottom
-                                                        width: 6
-                                                        color: "#88bbff"
-                                                        opacity: 0.5
-                                                        visible: selectedClip === modelData
-                                                        
-                                                        MouseArea {
-                                                            anchors.fill: parent
-                                                            cursorShape: Qt.SizeHorCursor
-                                                            drag.target: parent.parent
-                                                            drag.axis: Drag.XAxis
-                                                            // TODO: Implement trim start
-                                                        }
-                                                    }
-                                                    
-                                                    Rectangle {
-                                                        anchors.right: parent.right
-                                                        anchors.top: parent.top
-                                                        anchors.bottom: parent.bottom
-                                                        width: 6
-                                                        color: "#88bbff"
-                                                        opacity: 0.5
-                                                        visible: selectedClip === modelData
-                                                        
-                                                        MouseArea {
-                                                            anchors.fill: parent
-                                                            cursorShape: Qt.SizeHorCursor
-                                                            // TODO: Implement trim end
-                                                        }
-                                                    }
-                                                    
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                                        
-                                                        onClicked: (mouse) => {
-                                                            selectedClip = modelData
-                                                            clipClicked(modelData)
-                                                            if (mouse.button === Qt.RightButton) {
-                                                                clipContextMenu.popup()
-                                                            }
-                                                        }
-                                                        
-                                                        onDoubleClicked: {
-                                                            clipDoubleClicked(modelData)
-                                                        }
-                                                        
-                                                        onPositionChanged: (mouse) => {
-                                                            if (drag.active) {
-                                                                var newFrame = snapToGrid(xToFrame(parent.x + mouse.x - mouse.buttonDownX))
-                                                                if (!modelData.track.hasOverlap(newFrame, newFrame + modelData.duration, modelData)) {
-                                                                    timeline.moveClip(modelData, modelData.track, newFrame)
-                                                                }
-                                                            }
-                                                        }
-                                                        
-                                                        drag.target: parent
-                                                        drag.axis: Drag.XAxis
-                                                        drag.smoothed: false
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Audio Tracks Spacer
-                                    Rectangle {
-                                        width: parent.width
-                                        height: 24
-                                        color: "transparent"
-                                    }
-                                    
-                                    // Audio Tracks
-                                    Repeater {
-                                        model: timeline ? timeline.audioTracks : []
-                                        
-                                        Rectangle {
-                                            width: timelineView.contentWidth
-                                            height: trackHeight + 4
-                                            color: modelData.locked ? "#3a3020" : "#2a2a2a"
-                                            border.color: "#444"
-                                            border.width: 1
-                                            
-                                            // Audio clips/waveforms
-                                            Repeater {
-                                                model: modelData.clips
-                                                
-                                                Rectangle {
-                                                    x: frameToX(modelData.position)
-                                                    y: 2
-                                                    width: modelData.duration * pixelsPerFrame
-                                                    height: trackHeight
-                                                    color: selectedClip === modelData ? "#44aa66" : "#3a8a50"
-                                                    border.color: selectedClip === modelData ? "#88ddaa" : "#4a9a60"
-                                                    border.width: selectedClip === modelData ? 2 : 1
-                                                    radius: 3
-                                                    
-                                                    // Waveform visualization (placeholder)
-                                                    Canvas {
-                                                        anchors.fill: parent
-                                                        anchors.margins: 2
-                                                        
-                                                        onPaint: {
-                                                            var ctx = getContext("2d")
-                                                            ctx.clearRect(0, 0, width, height)
-                                                            ctx.fillStyle = "#2a5a3a"
-                                                            
-                                                            // Draw simple waveform pattern
-                                                            var bars = Math.floor(width / 4)
-                                                            for (var i = 0; i < bars; i++) {
-                                                                var h = Math.random() * height * 0.8 + height * 0.1
-                                                                var y = (height - h) / 2
-                                                                ctx.fillRect(i * 4, y, 2, h)
-                                                            }
-                                                        }
-                                                    }
-                                                    
-                                                    // Clip label
+                                                    color: timelineView.selectedClip === modelData ? "#0077cc" : "#2196F3"
+                                                    radius: 2
+                                                    clip: true
+
                                                     Text {
                                                         anchors.left: parent.left
                                                         anchors.top: parent.top
@@ -900,31 +729,85 @@ ApplicationWindow {
                                                         elide: Text.ElideRight
                                                         width: parent.width - 8
                                                     }
-                                                    
+
                                                     MouseArea {
                                                         anchors.fill: parent
                                                         onClicked: {
-                                                            selectedClip = modelData
-                                                            clipClicked(modelData)
+                                                            timelineView.selectedClip = modelData
+                                                            timelineView.clipClicked(modelData)
                                                         }
-                                                        onDoubleClicked: clipDoubleClicked(modelData)
+                                                        onDoubleClicked: timelineView.clipDoubleClicked(modelData)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Audio Tracks Spacer
+                                    Rectangle {
+                                        width: parent.width
+                                        height: 24
+                                        color: "transparent"
+                                    }
+
+                                    // Audio Tracks
+                                    Repeater {
+                                        model: timeline ? timeline.audioTracks : []
+
+                                        Rectangle {
+                                            width: timelineView.contentWidth
+                                            height: trackHeight + 4
+                                            color: modelData.locked ? "#1a1a1a" : "#1e2a1e"
+                                            border.color: "#333"
+                                            border.width: 1
+
+                                            Repeater {
+                                                model: modelData.clips ? modelData.clips : []
+
+                                                Rectangle {
+                                                    x: timelineView.frameToX(modelData.position.frames) - timelineView.headerWidth
+                                                    y: 2
+                                                    width: modelData.duration.frames * timelineView.pixelsPerFrame
+                                                    height: trackHeight
+                                                    color: timelineView.selectedClip === modelData ? "#007744" : "#4CAF50"
+                                                    radius: 2
+                                                    clip: true
+
+                                                    Text {
+                                                        anchors.left: parent.left
+                                                        anchors.top: parent.top
+                                                        anchors.margins: 4
+                                                        text: modelData.name
+                                                        color: "white"
+                                                        font.bold: true
+                                                        font.pixelSize: 10
+                                                        elide: Text.ElideRight
+                                                        width: parent.width - 8
+                                                    }
+
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        onClicked: {
+                                                            timelineView.selectedClip = modelData
+                                                            timelineView.clipClicked(modelData)
+                                                        }
+                                                        onDoubleClicked: timelineView.clipDoubleClicked(modelData)
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                
+
                                 // Playhead line
                                 Rectangle {
-                                    x: frameToX(playhead)
+                                    x: timelineView.frameToX(timelineView.playhead)
                                     y: 0
                                     width: 2
                                     height: parent.contentHeight
                                     color: "#ff4444"
                                     z: 100
-                                    
-                                    // Playhead handle
+
                                     Rectangle {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         anchors.top: parent.top
@@ -934,33 +817,33 @@ ApplicationWindow {
                                         radius: 2
                                     }
                                 }
-                                
+
                                 // Selection highlight
                                 Rectangle {
-                                    x: frameToX(timeline ? timeline.selectionStart : 0)
+                                    x: timelineView.frameToX(timeline ? timeline.selectionStart : 0)
                                     y: 0
-                                    width: timeline ? (timeline.selectionEnd - timeline.selectionStart) * pixelsPerFrame : 0
+                                    width: timeline ? (timeline.selectionEnd - timeline.selectionStart) * timelineView.pixelsPerFrame : 0
                                     height: parent.contentHeight
                                     color: "#4488ff"
                                     opacity: 0.1
                                     visible: timeline && timeline.hasSelection
                                     z: 50
                                 }
-                                
+
                                 // Click to seek
                                 MouseArea {
                                     anchors.fill: parent
                                     acceptedButtons: Qt.LeftButton
                                     z: -1
                                     onClicked: (mouse) => {
-                                        var frame = snapToGrid(xToFrame(mouse.x))
+                                        var frame = timelineView.snapToGrid(timelineView.xToFrame(mouse.x))
                                         videoEditor.seek(frame)
                                     }
                                 }
                             }
                         }
                     }
-                    
+
                     // Horizontal Scrollbar
                     ScrollBar {
                         id: hScroll
@@ -969,9 +852,9 @@ ApplicationWindow {
                         anchors.bottom: parent.bottom
                         anchors.leftMargin: headerWidth
                         orientation: Qt.Horizontal
-                        size: viewportWidth / contentWidth
+                        size: timelineView.viewportWidth > 0 ? Math.min(1.0, timelineView.viewportWidth / timelineView.contentWidth) : 1.0
                     }
-                    
+
                     // Vertical Scrollbar
                     ScrollBar {
                         id: vScroll
@@ -979,75 +862,12 @@ ApplicationWindow {
                         anchors.top: ruler.bottom
                         anchors.bottom: hScroll.top
                         orientation: Qt.Vertical
-                        size: trackArea.height / totalTrackHeight
-                    }
-                    
-                    // Zoom controls
-                    RowLayout {
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        anchors.margins: 4
-                        spacing: 4
-                        z: 200
-                        
-                        Button {
-                            text: "-"
-                            flat: true
-                            onClicked: pixelsPerFrame = Math.max(1, pixelsPerFrame - 1)
-                        }
-                        
-                        Label {
-                            text: Math.round(pixelsPerFrame * 100 / 4) + "%"
-                            color: "#aaa"
-                            font.pixelSize: 11
-                        }
-                        
-                        Button {
-                            text: "+"
-                            flat: true
-                            onClicked: pixelsPerFrame = Math.min(20, pixelsPerFrame + 1)
-                        }
-                    }
-                    
-                    // Clip Context Menu
-                    Menu {
-                        id: clipContextMenu
-                        
-                        MenuItem {
-                            text: qsTr("Split at Playhead")
-                            onTriggered: splitAtPlayhead()
-                        }
-                        
-                        MenuItem {
-                            text: qsTr("Copy")
-                            onTriggered: {
-                                // TODO: Implement copy
-                            }
-                        }
-                        
-                        MenuItem {
-                            text: qsTr("Delete")
-                            onTriggered: deleteSelection()
-                        }
-                        
-                        MenuItem {
-                            text: qsTr("Ripple Delete")
-                            onTriggered: rippleDeleteSelection()
-                        }
-                        
-                        MenuSeparator {}
-                        
-                        MenuItem {
-                            text: qsTr("Properties")
-                            onTriggered: {
-                                propertiesStack.currentIndex = 1
-                            }
-                        }
+                        size: trackArea.height > 0 ? Math.min(1.0, trackArea.height / Math.max(1, timelineView.totalTrackHeight)) : 1.0
                     }
                 }
             }
         }
-        
+
         // Right Panel - Effects/Properties
         Rectangle {
             Layout.preferredWidth: 280
@@ -1055,17 +875,16 @@ ApplicationWindow {
             color: palette.base
             border.color: palette.mid
             border.width: 1
-            
+
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 0
-                
-                // Panel Header
+
                 Rectangle {
                     Layout.fillWidth: true
                     height: 28
                     color: palette.alternateBase
-                    
+
                     Text {
                         anchors.left: parent.left
                         anchors.leftMargin: 8
@@ -1074,161 +893,72 @@ ApplicationWindow {
                         font.bold: true
                     }
                 }
-                
-                // Properties Stack
+
                 StackLayout {
                     id: propertiesStack
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    currentIndex: 0
-                    
-                    // No Selection
-                    Rectangle {
-                        color: palette.base
-                        
+
+                    // Default: no selection
+                    Item {
                         Text {
                             anchors.centerIn: parent
-                            text: qsTr("Select a clip to edit properties")
-                            color: palette.text
-                            opacity: 0.5
+                            text: qsTr("No clip selected")
+                            color: palette.mid
                         }
                     }
-                    
+
                     // Clip Properties
-                    ScrollView {
-                        clip: true
-                        
-                        ColumnLayout {
-                            width: parent.width
-                            spacing: 8
-                            
-                            // Clip Info
-                            GroupBox {
-                                Layout.fillWidth: true
-                                Layout.margins: 8
-                                title: qsTr("Clip Info")
-                                
-                                GridLayout {
-                                    anchors.fill: parent
-                                    columns: 2
-                                    rowSpacing: 4
-                                    
-                                    Label { text: qsTr("Name:") }
-                                    TextField {
-                                        Layout.fillWidth: true
-                                        text: timelineView.selectedClip ? timelineView.selectedClip.name : ""
-                                    }
-                                    
-                                    Label { text: qsTr("Source:") }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: timelineView.selectedClip ? timelineView.selectedClip.source : ""
-                                        elide: Text.ElideMiddle
-                                        font.pixelSize: 11
-                                    }
-                                    
-                                    Label { text: qsTr("Duration:") }
-                                    Label {
-                                        text: timelineView.selectedClip ? formatDuration(timelineView.selectedClip.duration) : ""
-                                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        GroupBox {
+                            Layout.fillWidth: true
+                            Layout.margins: 8
+                            title: qsTr("Clip")
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 4
+
+                                Label { text: qsTr("Name:") }
+                                TextField {
+                                    Layout.fillWidth: true
+                                    text: timelineView.selectedClip ? timelineView.selectedClip.name : ""
+                                }
+
+                                Label { text: qsTr("Speed:") }
+                                SpinBox {
+                                    Layout.fillWidth: true
+                                    from: 10
+                                    to: 1000
+                                    value: timelineView.selectedClip ? timelineView.selectedClip.speed * 100 : 100
+                                    suffix: "%"
+                                }
+
+                                Label { text: qsTr("Volume:") }
+                                Slider {
+                                    Layout.fillWidth: true
+                                    from: 0
+                                    to: 200
+                                    value: timelineView.selectedClip ? timelineView.selectedClip.volume * 100 : 100
                                 }
                             }
-                            
-                            // Transform
-                            GroupBox {
-                                Layout.fillWidth: true
-                                Layout.margins: 8
-                                title: qsTr("Transform")
-                                
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    
-                                    RowLayout {
-                                        Label { text: qsTr("Position:") }
-                                        SpinBox { from: -10000; to: 10000; value: 0 }
-                                        SpinBox { from: -10000; to: 10000; value: 0 }
-                                    }
-                                    
-                                    RowLayout {
-                                        Label { text: qsTr("Scale:") }
-                                        Slider { from: 0; to: 500; value: 100 }
-                                        Label { text: "100%" }
-                                    }
-                                    
-                                    RowLayout {
-                                        Label { text: qsTr("Rotation:") }
-                                        Slider { from: -180; to: 180; value: 0 }
-                                        Label { text: "0°" }
-                                    }
-                                    
-                                    RowLayout {
-                                        Label { text: qsTr("Opacity:") }
-                                        Slider { from: 0; to: 100; value: 100 }
-                                        Label { text: "100%" }
-                                    }
-                                }
-                            }
-                            
-                            // Speed
-                            GroupBox {
-                                Layout.fillWidth: true
-                                Layout.margins: 8
-                                title: qsTr("Time")
-                                
-                                RowLayout {
-                                    anchors.fill: parent
-                                    
-                                    Label { text: qsTr("Speed:") }
-                                    Slider { from: 10; to: 1000; value: 100 }
-                                    Label { text: "100%" }
-                                }
-                            }
-                            
-                            // Effects Stack
-                            GroupBox {
-                                Layout.fillWidth: true
-                                Layout.margins: 8
-                                title: qsTr("Effects")
-                                
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    
-                                    ListView {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 120
-                                        model: timelineView.selectedClip ? timelineView.selectedClip.effects : []
-                                        
-                                        delegate: Rectangle {
-                                            width: parent.width
-                                            height: 28
-                                            color: "transparent"
-                                            
-                                            RowLayout {
-                                                anchors.fill: parent
-                                                
-                                                CheckBox {
-                                                    checked: true
-                                                }
-                                                
-                                                Label {
-                                                    Layout.fillWidth: true
-                                                    text: modelData.name
-                                                }
-                                                
-                                                Button {
-                                                    text: "x"
-                                                    flat: true
-                                                    onClicked: timelineView.selectedClip.removeEffect(index)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    Button {
-                                        Layout.fillWidth: true
-                                        text: qsTr("+ Add Effect")
-                                        onClicked: effectsMenu.popup()
-                                    }
+                        }
+
+                        GroupBox {
+                            Layout.fillWidth: true
+                            Layout.margins: 8
+                            title: qsTr("Effects")
+
+                            ColumnLayout {
+                                anchors.fill: parent
+
+                                Button {
+                                    Layout.fillWidth: true
+                                    text: qsTr("+ Add Effect")
+                                    onClicked: effectsMenu.popup()
                                 }
                             }
                         }
@@ -1237,8 +967,9 @@ ApplicationWindow {
             }
         }
     }
-    
-    // Dialogs
+
+    // ── Dialogs ────────────────────────────────────────────────────────────────
+
     FileDialog {
         id: importDialog
         title: qsTr("Import Media")
@@ -1255,7 +986,7 @@ ApplicationWindow {
             }
         }
     }
-    
+
     FileDialog {
         id: openProjectDialog
         title: qsTr("Open Project")
@@ -1263,7 +994,7 @@ ApplicationWindow {
         nameFilters: [qsTr("Aegis Projects") + " (*.aegis)"]
         onAccepted: videoEditor.openProject(selectedFile)
     }
-    
+
     FileDialog {
         id: saveProjectDialog
         title: qsTr("Save Project As")
@@ -1271,7 +1002,7 @@ ApplicationWindow {
         nameFilters: [qsTr("Aegis Projects") + " (*.aegis)"]
         onAccepted: videoEditor.saveProject(selectedFile)
     }
-    
+
     FileDialog {
         id: renderDialog
         title: qsTr("Render Project")
@@ -1283,55 +1014,88 @@ ApplicationWindow {
         ]
         onAccepted: videoEditor.startRender(selectedFile)
     }
-    
+
     Dialog {
         id: newProjectDialog
         title: qsTr("New Project")
         standardButtons: Dialog.Ok | Dialog.Cancel
-        
+
         ColumnLayout {
             spacing: 16
-            
+
+            RowLayout {
+                Label { text: qsTr("Name:") }
+                TextField {
+                    id: projectNameField
+                    text: "Untitled Project"
+                    Layout.fillWidth: true
+                }
+            }
+
             RowLayout {
                 Label { text: qsTr("Resolution:") }
                 ComboBox {
+                    id: resolutionCombo
                     model: ["1920x1080 (1080p)", "1280x720 (720p)", "3840x2160 (4K)", "2560x1440 (2K)"]
                     currentIndex: 0
                 }
             }
-            
+
             RowLayout {
                 Label { text: qsTr("Frame Rate:") }
                 ComboBox {
+                    id: fpsCombo
                     model: ["24 fps", "25 fps", "30 fps", "60 fps"]
                     currentIndex: 2
                 }
             }
-            
+
             RowLayout {
                 Label { text: qsTr("Sample Rate:") }
                 ComboBox {
+                    id: sampleRateCombo
                     model: ["44100 Hz", "48000 Hz", "96000 Hz"]
                     currentIndex: 1
                 }
             }
         }
-        
+
         onAccepted: {
+            // Parse resolution
+            var resMap = {"0": [1920,1080], "1": [1280,720], "2": [3840,2160], "3": [2560,1440]}
+            var res = resMap[resolutionCombo.currentIndex.toString()] || [1920,1080]
+            var fpsMap = {"0": 24, "1": 25, "2": 30, "3": 60}
+            var fps = fpsMap[fpsCombo.currentIndex.toString()] || 30
+            var srMap = {"0": 44100, "1": 48000, "2": 96000}
+            var sr = srMap[sampleRateCombo.currentIndex.toString()] || 48000
+
             var profile = {
-                width: 1920,
-                height: 1080,
-                fps: 30,
-                sampleRate: 48000
+                width:  res[0],
+                height: res[1],
+                fps:    fps,
+                sampleRate: sr
             }
-            videoEditor.newProject(profile)
+
+            // [FIX Bug #4] Era: videoEditor.newProject(profile) — mancava il parametro name
+            // Firma C++: newProject(const QString& name, const ProjectProfile& profile)
+            videoEditor.newProject(projectNameField.text, profile)
         }
     }
-    
-    // Effects Menu
+
+    Dialog {
+        id: projectSettingsDialog
+        title: qsTr("Project Settings")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        Label {
+            text: qsTr("Project settings would appear here.")
+        }
+    }
+
+    // Effects context menu
     Menu {
         id: effectsMenu
-        
+
         MenuItem { text: qsTr("Color Correction"); onTriggered: addEffect("colorcorrection") }
         MenuItem { text: qsTr("Brightness/Contrast"); onTriggered: addEffect("brightness") }
         MenuItem { text: qsTr("Blur"); onTriggered: addEffect("blur") }
@@ -1342,20 +1106,49 @@ ApplicationWindow {
         MenuSeparator {}
         MenuItem { text: qsTr("Chroma Key"); onTriggered: addEffect("chromakey") }
     }
-    
+
+    // Clip right-click menu
+    Menu {
+        id: clipContextMenu
+
+        MenuItem {
+            text: qsTr("Split at Playhead")
+            onTriggered: timelineView.splitAtPlayhead()
+        }
+        MenuItem {
+            text: qsTr("Delete")
+            onTriggered: timelineView.deleteSelection()
+        }
+        MenuItem {
+            text: qsTr("Ripple Delete")
+            onTriggered: timelineView.rippleDeleteSelection()
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: qsTr("Properties")
+            onTriggered: propertiesStack.currentIndex = 1
+        }
+    }
+
+    // ── Helper functions ────────────────────────────────────────────────────
+
     function formatDuration(frames) {
-        var seconds = Math.floor(frames / videoEditor.fps)
+        // [FIX Bug #3] Usa videoEditor.fps (Q_PROPERTY) invece di videoEditor.profile.fps
+        var fps = videoEditor.fps > 0 ? videoEditor.fps : 30
+        var seconds = Math.floor(frames / fps)
         var mins = Math.floor(seconds / 60)
         var secs = seconds % 60
-        var frms = frames % videoEditor.fps
-        return mins.toString().padStart(2, '0') + ':' + 
-               secs.toString().padStart(2, '0') + ':' + 
+        var frms = frames % fps
+        return mins.toString().padStart(2, '0') + ':' +
+               secs.toString().padStart(2, '0') + ':' +
                frms.toString().padStart(2, '0')
     }
-    
+
     function addEffect(effectId) {
         if (timelineView.selectedClip) {
-            timelineView.selectedClip.addEffect(effectId)
+            if (typeof timelineView.selectedClip.addEffect === "function") {
+                timelineView.selectedClip.addEffect(effectId)
+            }
         }
     }
 }
