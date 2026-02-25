@@ -1,6 +1,8 @@
 // videoeditor.h - Professional Video Editor with Full Audio Platform Integration
 // Three-Pillar Architecture: audio, audio_effects, mpv_backend
 // Video Pipeline: video_output, video_effects, compositor
+//
+
 
 #pragma once
 
@@ -76,8 +78,14 @@ namespace Aegis {
         bool operator==(const Timecode& other) const {
             return frames == other.frames && fps == other.fps;
         }
+        bool operator!=(const Timecode& other) const {
+            return !(*this == other);
+        }
         bool operator<(const Timecode& other) const {
             return frames < other.frames;
+        }
+        bool operator>(const Timecode& other) const {
+            return frames > other.frames;
         }
         Timecode operator+(const Timecode& other) const {
             return Timecode{frames + other.frames, fps};
@@ -292,6 +300,7 @@ namespace Aegis {
         QString id() const { return m_id; }
         QString name() const { return m_name; }
         void setName(const QString& name);
+
         Type type() const { return m_type; }
 
         int index() const { return m_index; }
@@ -322,12 +331,12 @@ namespace Aegis {
         std::shared_ptr<MediaClip> clipAt(const Timecode& position) const;
         std::vector<std::shared_ptr<MediaClip>> clipsInRange(const Timecode& start,
                                                              const Timecode& end) const;
-                                                             QList<std::shared_ptr<MediaClip>> clips() const;
+        QList<std::shared_ptr<MediaClip>> clips() const;
 
-                                                             Timecode duration() const;
-                                                             bool hasOverlap(const Timecode& start, const Timecode& end,
-                                                                             std::shared_ptr<MediaClip> exclude = nullptr) const;
-                                                                             Timecode snapPosition(const Timecode& position, const Timecode& threshold = Timecode{5, 30}) const;
+        Timecode duration() const;
+        bool hasOverlap(const Timecode& start, const Timecode& end,
+                        std::shared_ptr<MediaClip> exclude = nullptr) const;
+        Timecode snapPosition(const Timecode& position, const Timecode& threshold = Timecode{5, 30}) const;
 
     signals:
         void nameChanged();
@@ -461,28 +470,25 @@ namespace Aegis {
         void stop();
         void togglePlayPause();
         void seek(const Timecode& position);
-        void scrub(const Timecode& position); // Interactive seeking
-        void stepForward(int frames = 1);
-        void stepBackward(int frames = 1);
-        void goToStart();
-        void goToEnd();
+        void frameStep(int frames);
 
-        // Properties
         State state() const { return m_state; }
         Timecode position() const { return m_position; }
-        void setPosition(const Timecode& pos);
         Timecode duration() const { return m_duration; }
-        void setDuration(const Timecode& dur);
-        double fps() const { return m_fps; }
-        void setFps(double fps);
-        bool isLooping() const { return m_looping; }
-        void setLooping(bool loop);
+        double fps() const { return m_position.fps; }
 
+        void setPosition(const Timecode& pos);
+        void setDuration(const Timecode& dur);
+        void setFps(int fps);
+        void setLooping(bool loop);
+        bool isLooping() const { return m_looping; }
+
+        // Loop region
+        void setLoopRegion(const Timecode& start, const Timecode& end);
         Timecode loopStart() const { return m_loopStart; }
         Timecode loopEnd() const { return m_loopEnd; }
-        void setLoopRange(const Timecode& start, const Timecode& end);
 
-        // Update from external clock (audio-driven)
+        // Audio clock sync
         void updateFromAudioClock(qint64 microseconds);
 
     signals:
@@ -491,27 +497,103 @@ namespace Aegis {
         void durationChanged(const Timecode& duration);
         void fpsChanged(double fps);
         void loopingChanged(bool looping);
-        void loopRangeChanged(const Timecode& start, const Timecode& end);
         void frameReady(const Timecode& position);
 
-    private:
+    private slots:
         void onPlaybackTimer();
 
+    private:
         State m_state = State::Stopped;
         Timecode m_position{0, 30};
         Timecode m_duration{0, 30};
-        double m_fps = 30.0;
         bool m_looping = false;
         Timecode m_loopStart{0, 30};
         Timecode m_loopEnd{0, 30};
 
         QTimer* m_playbackTimer = nullptr;
-        std::chrono::steady_clock::time_point m_playbackStartTime;
-        Timecode m_playbackStartPosition;
+        qint64 m_playbackStartTime = 0;
+        Timecode m_playbackStartPosition{0, 30};
     };
 
     // =============================================================================
-    // Main VideoEditor Class
+    // [FIX Bug #5] TimelineProxy - QObject aggregator exposed to QML as "timeline"
+    //
+    // VideoEditor non ha un oggetto "timeline" separato — questo proxy
+    // aggrega le informazioni necessarie alla UI in un unico QObject
+    // accessibile tramite videoEditor.timeline in QML.
+    // =============================================================================
+
+    class VideoEditor; // Forward declaration
+
+    class TimelineProxy : public QObject {
+        Q_OBJECT
+        // Playback position (frame number)
+        Q_PROPERTY(FrameTime playhead READ playhead NOTIFY playheadChanged)
+        // Total timeline duration in frames
+        Q_PROPERTY(FrameTime duration READ duration NOTIFY durationChanged)
+        // Project profile (contains fps, width, height, etc.)
+        Q_PROPERTY(Aegis::ProjectProfile profile READ profile NOTIFY profileChanged)
+        // Track lists
+        Q_PROPERTY(QList<QObject*> videoTracks READ videoTracksAsObjects NOTIFY tracksChanged)
+        Q_PROPERTY(QList<QObject*> audioTracks READ audioTracksAsObjects NOTIFY tracksChanged)
+        Q_PROPERTY(int videoTrackCount READ videoTrackCount NOTIFY tracksChanged)
+        Q_PROPERTY(int audioTrackCount READ audioTrackCount NOTIFY tracksChanged)
+        // Selection region
+        Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged)
+        Q_PROPERTY(FrameTime selectionStart READ selectionStart NOTIFY selectionChanged)
+        Q_PROPERTY(FrameTime selectionEnd READ selectionEnd NOTIFY selectionChanged)
+
+    public:
+        explicit TimelineProxy(VideoEditor* editor, QObject* parent = nullptr);
+
+        FrameTime playhead() const;
+        FrameTime duration() const;
+        ProjectProfile profile() const;
+
+        QList<QObject*> videoTracksAsObjects() const;
+        QList<QObject*> audioTracksAsObjects() const;
+        int videoTrackCount() const;
+        int audioTrackCount() const;
+
+        bool hasSelection() const { return m_hasSelection; }
+        FrameTime selectionStart() const { return m_selectionStart; }
+        FrameTime selectionEnd() const { return m_selectionEnd; }
+
+        // QML-invokable operations delegated to VideoEditor
+        Q_INVOKABLE void addVideoTrack();
+        Q_INVOKABLE void addAudioTrack();
+        Q_INVOKABLE void removeClip(QObject* clip);
+        Q_INVOKABLE void splitClip(QObject* clip, FrameTime atFrame);
+        Q_INVOKABLE void rippleDelete(FrameTime start, FrameTime end);
+        Q_INVOKABLE void insertClip(QObject* clip, QObject* track, FrameTime position);
+
+        // Snap frame to nearest clip edge or grid
+        Q_INVOKABLE FrameTime snap(FrameTime frame, int gridSize = 10) const;
+
+        // Called by VideoEditor to push updates
+        void notifyPlayheadChanged();
+        void notifyDurationChanged();
+        void notifyProfileChanged();
+        void notifyTracksChanged();
+        void setSelection(FrameTime start, FrameTime end);
+        void clearSelection();
+
+    signals:
+        void playheadChanged();
+        void durationChanged();
+        void profileChanged();
+        void tracksChanged();
+        void selectionChanged();
+
+    private:
+        VideoEditor* m_editor;  // Non-owning pointer (VideoEditor owns TimelineProxy)
+        bool m_hasSelection = false;
+        FrameTime m_selectionStart = 0;
+        FrameTime m_selectionEnd = 0;
+    };
+
+    // =============================================================================
+    // VideoEditor - Main controller (Three Pillars)
     // =============================================================================
 
     class VideoEditor : public QObject {
@@ -524,6 +606,14 @@ namespace Aegis {
         Q_PROPERTY(Timecode position READ position NOTIFY positionChanged)
         Q_PROPERTY(Timecode duration READ duration NOTIFY durationChanged)
         Q_PROPERTY(bool modified READ isModified NOTIFY modifiedChanged)
+
+        // [FIX Bug #3] Convenience properties for QML — derived from profile/transport
+        Q_PROPERTY(bool playing READ isPlaying NOTIFY stateChanged)
+        Q_PROPERTY(QSize resolution READ resolution NOTIFY profileChanged)
+        Q_PROPERTY(int fps READ fps NOTIFY profileChanged)
+
+        // [FIX Bug #5] Timeline proxy object for QML timeline panel
+        Q_PROPERTY(Aegis::TimelineProxy* timeline READ timeline NOTIFY projectChanged)
 
     public:
         explicit VideoEditor(QObject* parent = nullptr);
@@ -553,6 +643,16 @@ namespace Aegis {
 
         ProjectProfile profile() const { return m_profile; }
         void setProfile(const ProjectProfile& profile);
+
+        // [FIX Bug #3] Convenience getters used by Q_PROPERTY above
+        bool isPlaying() const {
+            return m_transport && m_transport->state() == TransportController::State::Playing;
+        }
+        QSize resolution() const { return m_profile.resolution(); }
+        int fps() const { return m_profile.fps; }
+
+        // [FIX Bug #5] Timeline proxy accessor
+        TimelineProxy* timeline() const { return m_timeline.get(); }
 
         // ============== Track Management ==============
         Track* addVideoTrack(const QString& name = QString());
@@ -607,11 +707,9 @@ namespace Aegis {
         void cancelExport();
 
         // ============== Audio-Video Integration ==============
-        void connectAudioReactiveEffects();  // Auto-connect audio to video effects
+        void connectAudioReactiveEffects();
         void setAudioSyncEnabled(bool enabled);
         bool isAudioSyncEnabled() const { return m_audioSyncEnabled; }
-
-        // Update video from audio clock (for perfect A/V sync)
         void updateVideoFromAudioClock(qint64 audioMicroseconds);
 
         // ============== Undo/Redo ==============
@@ -629,6 +727,10 @@ namespace Aegis {
         void removeMarker(const Timecode& position);
         QList<TimelineMarker> markers() const;
 
+        // ============== Internal helper (called by TimelineProxy) ==============
+        void addVideoTrackFromProxy();
+        void addAudioTrackFromProxy();
+
     signals:
         void projectChanged();
         void profileChanged();
@@ -641,7 +743,8 @@ namespace Aegis {
         void clipImported(std::shared_ptr<MediaClip> clip);
         void frameReady(const QImage& frame, const Timecode& position);
         void exportProgress(double percent);
-        void exportFinished(bool success, const QString& message);
+        void exportFinished(bool success, const QString& path);
+        void warning(const QString& message);
         void error(const QString& message);
         void statusMessage(const QString& message);
 
@@ -656,6 +759,7 @@ namespace Aegis {
         void renderFrame(const Timecode& position);
         void compositeAndDisplay(const Timecode& position);
         void syncAudioToVideo(const Timecode& videoPosition);
+        void setModified(bool modified);
 
         // Project data
         struct ProjectData {
@@ -677,6 +781,9 @@ namespace Aegis {
         std::unique_ptr<VideoOutput> m_videoOutput;
         std::unique_ptr<VideoCompositor> m_compositor;
         std::unique_ptr<TransportController> m_transport;
+
+        // [FIX Bug #5] Timeline proxy
+        std::unique_ptr<TimelineProxy> m_timeline;
 
         // State
         QImage m_currentFrame;
@@ -705,3 +812,4 @@ Q_DECLARE_METATYPE(Aegis::ExportPreset)
 Q_DECLARE_METATYPE(Aegis::MediaClip*)
 Q_DECLARE_METATYPE(Aegis::Track*)
 Q_DECLARE_METATYPE(Aegis::VideoCompositor::BlendMode)
+Q_DECLARE_METATYPE(Aegis::TimelineProxy*)
