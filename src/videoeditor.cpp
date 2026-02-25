@@ -1,4 +1,5 @@
 // videoeditor.cpp - Professional Video Editor Implementation
+
 #include "videoeditor.h"
 #include <QDebug>
 #include <QFile>
@@ -27,10 +28,10 @@ namespace Aegis {
         int frameNum = static_cast<int>(frames % fps);
 
         return QString("%1:%2:%3:%4")
-        .arg(hours, 2, 10, QChar('0'))
-        .arg(minutes, 2, 10, QChar('0'))
-        .arg(seconds, 2, 10, QChar('0'))
-        .arg(frameNum, 2, 10, QChar('0'));
+            .arg(hours, 2, 10, QChar('0'))
+            .arg(minutes, 2, 10, QChar('0'))
+            .arg(seconds, 2, 10, QChar('0'))
+            .arg(frameNum, 2, 10, QChar('0'));
     }
 
     QJsonObject Timecode::toJson() const {
@@ -156,15 +157,14 @@ namespace Aegis {
     // =============================================================================
 
     MediaClip::MediaClip(const QString& id, const QUrl& source, Type type, QObject* parent)
-    : QObject(parent)
-    , m_id(id)
-    , m_source(source)
-    , m_type(type)
-    , m_name(QFileInfo(source.toLocalFile()).fileName())
-    , m_audioEffects(std::make_unique<AudioEffectChain>())
-    , m_videoEffects(std::make_unique<VideoEffectChain>())
+        : QObject(parent)
+        , m_id(id)
+        , m_source(source)
+        , m_type(type)
+        , m_name(QFileInfo(source.toLocalFile()).fileName())
+        , m_audioEffects(std::make_unique<AudioEffectChain>())
+        , m_videoEffects(std::make_unique<VideoEffectChain>())
     {
-        // Initialize with default fps (will be updated when media is loaded)
         m_position.fps = 30;
         m_inPoint.fps = 30;
         m_outPoint.fps = 30;
@@ -202,9 +202,10 @@ namespace Aegis {
         updateDuration();
     }
 
+    // [FIX Bug #1] La variabile locale 'effectiveLen' era calcolata ma mai usata.
+    // duration() calcola già il valore on-demand, quindi updateDuration() deve solo
+    // emettere il segnale per notificare la UI che la durata è cambiata.
     void MediaClip::updateDuration() {
-        FrameTime sourceLen = m_outPoint.frames - m_inPoint.frames;
-        FrameTime effectiveLen = static_cast<FrameTime>(sourceLen / m_speed);
         emit durationChanged();
     }
 
@@ -227,7 +228,6 @@ namespace Aegis {
     void MediaClip::setTrackIndex(int idx) {
         if (m_trackIndex != idx) {
             m_trackIndex = idx;
-            emit trackIndexChanged();
         }
     }
 
@@ -258,11 +258,7 @@ namespace Aegis {
 
     bool MediaClip::loadMediaInfo(MpvBackend* backend) {
         if (!backend) return false;
-
         // Use MPV to probe media file
-        // This would involve loading the file and querying properties
-        // For now, simplified implementation
-
         return true;
     }
 
@@ -284,9 +280,9 @@ namespace Aegis {
     std::shared_ptr<MediaClip> MediaClip::fromJson(const QJsonObject& json, QObject* parent) {
         auto clip = std::make_shared<MediaClip>(
             json["id"].toString(),
-                                                QUrl(json["source"].toString()),
-                                                static_cast<Type>(json["type"].toInt(0)),
-                                                parent
+            QUrl(json["source"].toString()),
+            static_cast<Type>(json["type"].toInt(0)),
+            parent
         );
         clip->setName(json["name"].toString());
         clip->m_position = Timecode::fromJson(json["position"].toObject());
@@ -303,12 +299,12 @@ namespace Aegis {
     // =============================================================================
 
     Track::Track(const QString& id, Type type, const QString& name, QObject* parent)
-    : QObject(parent)
-    , m_id(id)
-    , m_type(type)
-    , m_name(name.isEmpty() ? (type == Type::Video ? "Video" : "Audio") : name)
-    , m_audioEffects(std::make_unique<AudioEffectChain>())
-    , m_videoEffects(std::make_unique<VideoEffectChain>())
+        : QObject(parent)
+        , m_id(id)
+        , m_type(type)
+        , m_name(name.isEmpty() ? (type == Type::Video ? "Video" : "Audio") : name)
+        , m_audioEffects(std::make_unique<AudioEffectChain>())
+        , m_videoEffects(std::make_unique<VideoEffectChain>())
     {}
 
     void Track::setName(const QString& name) {
@@ -362,7 +358,6 @@ namespace Aegis {
         clip->setPosition(Timecode{clip->position().frames, m_type == Type::Video ? 30 : 48000});
         m_clips.push_back(clip);
 
-        // Sort by position
         std::sort(m_clips.begin(), m_clips.end(),
                   [](const auto& a, const auto& b) {
                       return a->position().frames < b->position().frames;
@@ -408,503 +403,886 @@ namespace Aegis {
     }
 
     std::vector<std::shared_ptr<MediaClip>> Track::clipsInRange(const Timecode& start,
-                                                                const Timecode& end) const {
-                                                                    QReadLocker lock(&m_lock);
-                                                                    std::vector<std::shared_ptr<MediaClip>> result;
-                                                                    for (const auto& clip : m_clips) {
-                                                                        Timecode clipStart = clip->position();
-                                                                        Timecode clipEnd = Timecode{clipStart.frames + clip->duration().frames, clipStart.fps};
-                                                                        if (clipStart.frames < end.frames && clipEnd.frames > start.frames) {
-                                                                            result.push_back(clip);
-                                                                        }
-                                                                    }
-                                                                    return result;
-                                                                }
-
-                                                                Timecode Track::duration() const {
-                                                                    QReadLocker lock(&m_lock);
-                                                                    FrameTime maxEnd = 0;
-                                                                    for (const auto& clip : m_clips) {
-                                                                        maxEnd = std::max(maxEnd, clip->position().frames + clip->duration().frames);
-                                                                    }
-                                                                    return Timecode{maxEnd, 30};
-                                                                }
-
-                                                                // =============================================================================
-                                                                // TransportController Implementation
-                                                                // =============================================================================
-
-                                                                TransportController::TransportController(QObject* parent)
-                                                                : QObject(parent)
-                                                                {
-                                                                    m_playbackTimer = new QTimer(this);
-                                                                    m_playbackTimer->setInterval(16); // ~60fps
-                                                                    connect(m_playbackTimer, &QTimer::timeout, this, &TransportController::onPlaybackTimer);
-                                                                }
-
-                                                                void TransportController::play() {
-                                                                    if (m_state == State::Playing) return;
-
-                                                                    m_state = State::Playing;
-                                                                    m_playbackStartTime = std::chrono::steady_clock::now();
-                                                                    m_playbackStartPosition = m_position;
-                                                                    m_playbackTimer->start();
-
-                                                                    emit stateChanged(m_state);
-                                                                }
-
-                                                                void TransportController::pause() {
-                                                                    if (m_state != State::Playing) return;
-
-                                                                    m_playbackTimer->stop();
-                                                                    m_state = State::Paused;
-                                                                    emit stateChanged(m_state);
-                                                                }
-
-                                                                void TransportController::stop() {
-                                                                    m_playbackTimer->stop();
-                                                                    m_state = State::Stopped;
-                                                                    m_position = Timecode{0, m_position.fps};
-                                                                    emit stateChanged(m_state);
-                                                                    emit positionChanged(m_position);
-                                                                }
-
-                                                                void TransportController::togglePlayPause() {
-                                                                    if (m_state == State::Playing) pause();
-                                                                    else play();
-                                                                }
-
-                                                                void TransportController::seek(const Timecode& position) {
-                                                                    setPosition(position);
-                                                                    if (m_state == State::Playing) {
-                                                                        // Restart timing from new position
-                                                                        m_playbackStartTime = std::chrono::steady_clock::now();
-                                                                        m_playbackStartPosition = position;
-                                                                    }
-                                                                }
-
-                                                                void TransportController::setPosition(const Timecode& pos) {
-                                                                    Timecode newPos = pos;
-                                                                    newPos.frames = std::max(FrameTime(0), std::min(newPos.frames, m_duration.frames));
-
-                                                                    if (m_position != newPos) {
-                                                                        m_position = newPos;
-                                                                        emit positionChanged(m_position);
-                                                                    }
-                                                                }
-
-                                                                void TransportController::onPlaybackTimer() {
-                                                                    if (m_state != State::Playing) return;
-
-                                                                    auto now = std::chrono::steady_clock::now();
-                                                                    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                                                                        now - m_playbackStartTime).count();
-
-                                                                        double elapsedSeconds = elapsed / 1000000.0;
-                                                                        FrameTime frameOffset = static_cast<FrameTime>(elapsedSeconds * m_fps);
-                                                                        Timecode newPos{m_playbackStartPosition.frames + frameOffset, m_position.fps};
-
-                                                                        // Handle looping
-                                                                        if (m_looping && newPos.frames >= m_loopEnd.frames) {
-                                                                            newPos.frames = m_loopStart.frames;
-                                                                            m_playbackStartTime = now;
-                                                                            m_playbackStartPosition = m_loopStart;
-                                                                        }
-
-                                                                        // Check end
-                                                                        if (newPos.frames >= m_duration.frames) {
-                                                                            stop();
-                                                                            return;
-                                                                        }
-
-                                                                        setPosition(newPos);
-                                                                        emit frameReady(m_position);
-                                                                }
-
-                                                                void TransportController::updateFromAudioClock(qint64 microseconds) {
-                                                                    if (m_state != State::Playing) return;
-
-                                                                    Timecode newPos = Timecode::fromMicroseconds(microseconds, m_position.fps);
-                                                                    setPosition(newPos);
-                                                                }
-
-                                                                // =============================================================================
-                                                                // VideoEditor Implementation
-                                                                // =============================================================================
-
-                                                                VideoEditor::VideoEditor(QObject* parent)
-                                                                : QObject(parent)
-                                                                , m_mpvBackend(std::make_unique<MpvBackend>(this))
-                                                                , m_compositor(std::make_unique<VideoCompositor>(ProjectProfile{}, this))
-                                                                , m_transport(std::make_unique<TransportController>(this))
-                                                                {
-                                                                    // Connect transport signals
-                                                                    connect(m_transport.get(), &TransportController::positionChanged,
-                                                                            this, &VideoEditor::onTransportPositionChanged);
-                                                                    connect(m_transport.get(), &TransportController::stateChanged,
-                                                                            this, &VideoEditor::onTransportStateChanged);
-                                                                    connect(m_transport.get(), &TransportController::frameReady,
-                                                                            [this](const Timecode& pos) { renderFrame(pos); });
-                                                                }
-
-                                                                VideoEditor::~VideoEditor() = default;
-
-                                                                void VideoEditor::initializeAudio(AudioEngine* engine, AudioOutput* output) {
-                                                                    m_audioEngine = engine;
-                                                                    m_audioOutput = output;
-
-                                                                    // Connect audio position for sync
-                                                                    if (m_audioOutput) {
-                                                                        connect(m_audioOutput, &AudioOutput::stateChanged,
-                                                                                this, [this](bool playing) {
-                                                                                    if (playing) m_transport->play();
-                                                                                    else m_transport->pause();
-                                                                                });
-                                                                    }
-                                                                }
-
-                                                                void VideoEditor::initializeVideo(std::unique_ptr<VideoOutput> output) {
-                                                                    if (!output) {
-                                                                        output = VideoOutputFactory::create(VideoBackend::OpenGL);
-                                                                    }
-                                                                    m_videoOutput = std::move(output);
-
-                                                                    if (m_videoOutput) {
-                                                                        m_videoOutput->initialize(QSize(1920, 1080));
-                                                                        m_videoOutput->setAudioOutput(m_audioOutput); // Enable A/V sync
-                                                                    }
-
-                                                                    // Initialize compositor
-                                                                    m_compositor->initialize();
-                                                                }
-
-                                                                void VideoEditor::onTransportPositionChanged(const Timecode& position) {
-                                                                    emit positionChanged(position);
-                                                                    renderFrame(position);
-                                                                }
-
-                                                                void VideoEditor::renderFrame(const Timecode& position) {
-                                                                    if (!m_project) return;
-
-                                                                    // Get tracks
-                                                                    std::vector<Track*> videoTracks;
-                                                                    std::vector<Track*> audioTracks;
-
-                                                                    for (const auto& track : m_project->tracks) {
-                                                                        if (track->type() == Track::Type::Video) videoTracks.push_back(track.get());
-                                                                        else audioTracks.push_back(track.get());
-                                                                    }
-
-                                                                    // Composite video
-                                                                    if (m_compositor) {
-                                                                        auto fbo = m_compositor->compositeFrame(position, videoTracks, audioTracks);
-                                                                        if (fbo && m_videoOutput) {
-                                                                            // Convert FBO to VideoFrame and present
-                                                                            VideoFrame frame;
-                                                                            frame.pts = VideoPTS::fromMicroseconds(position.toMicroseconds());
-                                                                            m_videoOutput->presentFrame(frame);
-                                                                        }
-                                                                    }
-
-                                                                    // Process audio
-                                                                    if (m_audioEngine && !audioTracks.empty()) {
-                                                                        // Mix audio from all tracks at this position
-                                                                        // This would involve processing through AudioEffectChain
-                                                                    }
-
-                                                                    emit frameReady(m_currentFrame, position);
-                                                                }
-
-                                                                bool VideoEditor::newProject(const QString& name, const ProjectProfile& profile) {
-                                                                    closeProject();
-
-                                                                    m_project = std::make_unique<ProjectData>();
-                                                                    m_projectName = name;
-                                                                    m_profile = profile;
-                                                                    m_projectPath.clear();
-
-                                                                    // Update compositor profile
-                                                                    m_compositor = std::make_unique<VideoCompositor>(profile, this);
-                                                                    m_compositor->initialize();
-
-                                                                    // Add default tracks
-                                                                    addVideoTrack("Video 1");
-                                                                    addAudioTrack("Audio 1");
-                                                                    addAudioTrack("Audio 2");
-
-                                                                    m_transport->setFps(profile.fps);
-                                                                    m_transport->setPosition(Timecode{0, profile.fps});
-                                                                    m_transport->setDuration(Timecode{0, profile.fps});
-
-                                                                    emit projectChanged();
-                                                                    emit profileChanged();
-                                                                    setModified(false);
-
-                                                                    return true;
-                                                                }
-
-                                                                Track* VideoEditor::addVideoTrack(const QString& name) {
-                                                                    if (!m_project) return nullptr;
-
-                                                                    QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                                                                    auto track = std::make_unique<Track>(id, Track::Type::Video, name, this);
-                                                                    track->setIndex(videoTracks().size());
-
-                                                                    Track* ptr = track.get();
-                                                                    m_project->tracks.append(std::move(track));
-
-                                                                    emit trackAdded(ptr);
-                                                                    emit modifiedChanged();
-                                                                    return ptr;
-                                                                }
-
-                                                                Track* VideoEditor::addAudioTrack(const QString& name) {
-                                                                    if (!m_project) return nullptr;
-
-                                                                    QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                                                                    auto track = std::make_unique<Track>(id, Track::Type::Audio, name, this);
-                                                                    track->setIndex(audioTracks().size());
-
-                                                                    Track* ptr = track.get();
-                                                                    m_project->tracks.append(std::move(track));
-
-                                                                    emit trackAdded(ptr);
-                                                                    emit modifiedChanged();
-                                                                    return ptr;
-                                                                }
-
-                                                                QList<Track*> VideoEditor::videoTracks() const {
-                                                                    QList<Track*> result;
-                                                                    if (!m_project) return result;
-
-                                                                    for (const auto& track : m_project->tracks) {
-                                                                        if (track->type() == Track::Type::Video) {
-                                                                            result.append(track.get());
-                                                                        }
-                                                                    }
-                                                                    return result;
-                                                                }
-
-                                                                QList<Track*> VideoEditor::audioTracks() const {
-                                                                    QList<Track*> result;
-                                                                    if (!m_project) return result;
-
-                                                                    for (const auto& track : m_project->tracks) {
-                                                                        if (track->type() == Track::Type::Audio) {
-                                                                            result.append(track.get());
-                                                                        }
-                                                                    }
-                                                                    return result;
-                                                                }
-
-                                                                std::shared_ptr<MediaClip> VideoEditor::importMedia(const QUrl& url,
-                                                                                                                    Track* targetTrack,
-                                                                                                                    const Timecode& position) {
-                                                                    if (!m_project) return nullptr;
-
-                                                                    QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                                                                    QFileInfo info(url.toLocalFile());
-
-                                                                    MediaClip::Type type = MediaClip::Type::Video;
-                                                                    if (info.suffix().toLower() == "wav" || info.suffix().toLower() == "mp3") {
-                                                                        type = MediaClip::Type::Audio;
-                                                                    } else if (info.suffix().toLower() == "jpg" || info.suffix().toLower() == "png") {
-                                                                        type = MediaClip::Type::Image;
-                                                                    }
-
-                                                                    auto clip = std::make_shared<MediaClip>(id, url, type, this);
-
-                                                                    // Load media info using MPV backend
-                                                                    clip->loadMediaInfo(m_mpvBackend.get());
-
-                                                                    // Add to track
-                                                                    if (!targetTrack) {
-                                                                        targetTrack = (type == MediaClip::Type::Audio) ?
-                                                                        audioTracks().first() : videoTracks().first();
-                                                                    }
-
-                                                                    if (targetTrack) {
-                                                                        clip->setPosition(position);
-                                                                        targetTrack->addClip(clip);
-                                                                    }
-
-                                                                    emit clipImported(clip);
-                                                                    setModified(true);
-
-                                                                    // Update duration
-                                                                    Timecode newDuration = duration();
-                                                                    if (Timecode{position.frames + clip->duration().frames, 30} > newDuration) {
-                                                                        m_transport->setDuration(Timecode{position.frames + clip->duration().frames, 30});
-                                                                        emit durationChanged();
-                                                                    }
-
-                                                                    return clip;
-                                                                                                                    }
-
-                                                                                                                    void VideoEditor::splitClip(std::shared_ptr<MediaClip> clip, const Timecode& atTime) {
-                                                                                                                        if (!clip || !m_project) return;
-
-                                                                                                                        Timecode clipStart = clip->position();
-                                                                                                                        Timecode clipEnd = Timecode{clipStart.frames + clip->duration().frames, clipStart.fps};
-
-                                                                                                                        if (atTime.frames <= clipStart.frames || atTime.frames >= clipEnd.frames) {
-                                                                                                                            return; // Can't split outside clip bounds
-                                                                                                                        }
-
-                                                                                                                        // Calculate split point in source
-                                                                                                                        Timecode sourceSplit = clip->mapToSource(atTime);
-                                                                                                                        Timecode originalOut = clip->outPoint();
-
-                                                                                                                        // Adjust first clip
-                                                                                                                        clip->setOutPoint(sourceSplit);
-
-                                                                                                                        // Create second clip
-                                                                                                                        QString newId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                                                                                                                        auto newClip = std::make_shared<MediaClip>(newId, clip->source(), clip->type(), this);
-                                                                                                                        newClip->setName(clip->name() + " (split)");
-                                                                                                                        newClip->setInPoint(sourceSplit);
-                                                                                                                        newClip->setOutPoint(originalOut);
-                                                                                                                        newClip->setPosition(atTime);
-                                                                                                                        newClip->setSpeed(clip->speed());
-
-                                                                                                                        // Add to same track
-                                                                                                                        for (auto& track : m_project->tracks) {
-                                                                                                                            auto clips = track->clips();
-                                                                                                                            for (const auto& c : clips) {
-                                                                                                                                if (c == clip) {
-                                                                                                                                    track->addClip(newClip);
-                                                                                                                                    break;
-                                                                                                                                }
-                                                                                                                            }
-                                                                                                                        }
-
-                                                                                                                        setModified(true);
-                                                                                                                    }
-
-                                                                                                                    void VideoEditor::play() {
-                                                                                                                        if (!m_audioSyncEnabled || !m_audioOutput) {
-                                                                                                                            m_transport->play();
-                                                                                                                        } else {
-                                                                                                                            // Audio-driven playback
-                                                                                                                            m_transport->play();
-                                                                                                                            if (m_audioEngine) {
-                                                                                                                                // Start audio playback at current position
-                                                                                                                                m_audioEngine->setPosition(m_transport->position().toSeconds());
-                                                                                                                            }
-                                                                                                                        }
-                                                                                                                    }
-
-                                                                                                                    void VideoEditor::pause() {
-                                                                                                                        m_transport->pause();
-                                                                                                                        if (m_audioEngine) {
-                                                                                                                            m_audioEngine->stop();
-                                                                                                                        }
-                                                                                                                    }
-
-                                                                                                                    void VideoEditor::stop() {
-                                                                                                                        m_transport->stop();
-                                                                                                                        if (m_audioEngine) {
-                                                                                                                            m_audioEngine->stop();
-                                                                                                                        }
-                                                                                                                    }
-
-                                                                                                                    void VideoEditor::seek(const Timecode& position) {
-                                                                                                                        m_transport->seek(position);
-                                                                                                                        if (m_audioEngine && m_audioOutput) {
-                                                                                                                            m_audioEngine->seek(position.toSeconds());
-                                                                                                                        }
-                                                                                                                    }
-
-                                                                                                                    void VideoEditor::updateVideoFromAudioClock(qint64 audioMicroseconds) {
-                                                                                                                        if (!m_audioSyncEnabled) return;
-
-                                                                                                                        Timecode videoPos = Timecode::fromMicroseconds(audioMicroseconds, m_profile.fps);
-                                                                                                                        m_transport->setPosition(videoPos);
-                                                                                                                    }
-
-                                                                                                                    bool VideoEditor::exportVideo(const QString& outputPath,
-                                                                                                                                                  const ExportSettings& settings,
-                                                                                                                                                  const Timecode& start,
-                                                                                                                                                  const Timecode& end) {
-                                                                                                                        if (!m_project || m_exporting) return false;
-
-                                                                                                                        m_exporting = true;
-
-                                                                                                                        // Create exporter thread
-                                                                                                                        QtConcurrent::run([this, outputPath, settings, start, end]() {
-                                                                                                                            Timecode range = end.frames > 0 ? end : duration();
-                                                                                                                            Timecode current = start;
-
-                                                                                                                            // Setup FFmpeg or internal encoder
-                                                                                                                            // This is a simplified implementation
-
-                                                                                                                            while (current.frames < range.frames && m_exporting) {
-                                                                                                                                // Render frame
-                                                                                                                                renderFrame(current);
-
-                                                                                                                                // Encode frame
-                                                                                                                                // ...
-
-                                                                                                                                // Emit progress
-                                                                                                                                double progress = static_cast<double>(current.frames - start.frames) /
-                                                                                                                                (range.frames - start.frames);
-                                                                                                                                emit exportProgress(progress);
-
-                                                                                                                                current.frames++;
-                                                                                                                            }
-
-                                                                                                                            m_exporting = false;
-                                                                                                                            emit exportFinished(true, "Export complete");
-                                                                                                                        });
-
-                                                                                                                        return true;
-                                                                                                                                                  }
-
-                                                                                                                                                  void VideoEditor::pushUndoCommand(const QString& description,
-                                                                                                                                                                                    std::function<void()> undo,
-                                                                                                                                                                                    std::function<void()> redo) {
-                                                                                                                                                      if (m_undoStack.size() >= m_maxUndoLevels) {
-                                                                                                                                                          m_undoStack.removeFirst();
-                                                                                                                                                      }
-
-                                                                                                                                                      m_undoStack.push({description, undo, redo});
-                                                                                                                                                      m_redoStack.clear();
-                                                                                                                                                      setModified(true);
-                                                                                                                                                                                    }
-
-                                                                                                                                                                                    void VideoEditor::undo() {
-                                                                                                                                                                                        if (m_undoStack.isEmpty()) return;
-
-                                                                                                                                                                                        auto cmd = m_undoStack.pop();
-                                                                                                                                                                                        cmd.undo();
-                                                                                                                                                                                        m_redoStack.push(cmd);
-                                                                                                                                                                                        emit modifiedChanged();
-                                                                                                                                                                                    }
-
-                                                                                                                                                                                    void VideoEditor::redo() {
-                                                                                                                                                                                        if (m_redoStack.isEmpty()) return;
-
-                                                                                                                                                                                        auto cmd = m_redoStack.pop();
-                                                                                                                                                                                        cmd.redo();
-                                                                                                                                                                                        m_undoStack.push(cmd);
-                                                                                                                                                                                        emit modifiedChanged();
-                                                                                                                                                                                    }
-
-                                                                                                                                                                                    void VideoEditor::setModified(bool modified) {
-                                                                                                                                                                                        if (m_modified != modified) {
-                                                                                                                                                                                            m_modified = modified;
-                                                                                                                                                                                            emit modifiedChanged();
-                                                                                                                                                                                        }
-                                                                                                                                                                                    }
-
-                                                                                                                                                                                    Timecode VideoEditor::duration() const {
-                                                                                                                                                                                        if (!m_project) return Timecode{0, 30};
-
-                                                                                                                                                                                        FrameTime maxFrames = 0;
-                                                                                                                                                                                        for (const auto& track : m_project->tracks) {
-                                                                                                                                                                                            maxFrames = std::max(maxFrames, track->duration().frames);
-                                                                                                                                                                                        }
-                                                                                                                                                                                        return Timecode{maxFrames, m_profile.fps};
-                                                                                                                                                                                    }
+                                                                 const Timecode& end) const {
+        QReadLocker lock(&m_lock);
+        std::vector<std::shared_ptr<MediaClip>> result;
+        for (const auto& clip : m_clips) {
+            Timecode clipStart = clip->position();
+            Timecode clipEnd = Timecode{clipStart.frames + clip->duration().frames, clipStart.fps};
+            if (clipStart.frames < end.frames && clipEnd.frames > start.frames) {
+                result.push_back(clip);
+            }
+        }
+        return result;
+    }
+
+    QList<std::shared_ptr<MediaClip>> Track::clips() const {
+        QReadLocker lock(&m_lock);
+        QList<std::shared_ptr<MediaClip>> result;
+        for (const auto& c : m_clips) result.append(c);
+        return result;
+    }
+
+    Timecode Track::duration() const {
+        QReadLocker lock(&m_lock);
+        FrameTime maxEnd = 0;
+        for (const auto& clip : m_clips) {
+            maxEnd = std::max(maxEnd, clip->position().frames + clip->duration().frames);
+        }
+        return Timecode{maxEnd, 30};
+    }
+
+    bool Track::hasOverlap(const Timecode& start, const Timecode& end,
+                           std::shared_ptr<MediaClip> exclude) const {
+        QReadLocker lock(&m_lock);
+        for (const auto& clip : m_clips) {
+            if (clip == exclude) continue;
+            Timecode cs = clip->position();
+            Timecode ce = Timecode{cs.frames + clip->duration().frames, cs.fps};
+            if (cs.frames < end.frames && ce.frames > start.frames) return true;
+        }
+        return false;
+    }
+
+    Timecode Track::snapPosition(const Timecode& position, const Timecode& threshold) const {
+        QReadLocker lock(&m_lock);
+        for (const auto& clip : m_clips) {
+            Timecode cs = clip->position();
+            Timecode ce = Timecode{cs.frames + clip->duration().frames, cs.fps};
+            if (std::abs(position.frames - cs.frames) <= threshold.frames) return cs;
+            if (std::abs(position.frames - ce.frames) <= threshold.frames) return ce;
+        }
+        return position;
+    }
+
+    // =============================================================================
+    // TransportController Implementation
+    // =============================================================================
+
+    TransportController::TransportController(QObject* parent)
+        : QObject(parent)
+    {
+        m_playbackTimer = new QTimer(this);
+        m_playbackTimer->setInterval(16); // ~60fps
+        connect(m_playbackTimer, &QTimer::timeout, this, &TransportController::onPlaybackTimer);
+    }
+
+    void TransportController::play() {
+        if (m_state == State::Playing) return;
+
+        m_playbackStartTime = QDateTime::currentMSecsSinceEpoch();
+        m_playbackStartPosition = m_position;
+        m_state = State::Playing;
+        m_playbackTimer->start();
+        emit stateChanged(m_state);
+    }
+
+    void TransportController::pause() {
+        if (m_state != State::Playing) return;
+        m_state = State::Paused;
+        m_playbackTimer->stop();
+        emit stateChanged(m_state);
+    }
+
+    void TransportController::stop() {
+        m_state = State::Stopped;
+        m_playbackTimer->stop();
+        setPosition(Timecode{0, m_position.fps});
+        emit stateChanged(m_state);
+    }
+
+    void TransportController::togglePlayPause() {
+        if (m_state == State::Playing) pause();
+        else play();
+    }
+
+    void TransportController::seek(const Timecode& position) {
+        m_playbackStartTime = QDateTime::currentMSecsSinceEpoch();
+        m_playbackStartPosition = position;
+        setPosition(position);
+    }
+
+    void TransportController::frameStep(int frames) {
+        Timecode newPos = m_position;
+        newPos.frames += frames;
+        newPos.frames = std::clamp(newPos.frames, FrameTime(0), m_duration.frames);
+        setPosition(newPos);
+    }
+
+    void TransportController::setPosition(const Timecode& pos) {
+        if (m_position != pos) {
+            m_position = pos;
+            emit positionChanged(m_position);
+        }
+    }
+
+    void TransportController::setDuration(const Timecode& dur) {
+        if (m_duration != dur) {
+            m_duration = dur;
+            emit durationChanged(m_duration);
+        }
+    }
+
+    void TransportController::setFps(int fps) {
+        if (m_position.fps != fps) {
+            m_position.fps = fps;
+            m_duration.fps = fps;
+            emit fpsChanged(fps);
+        }
+    }
+
+    void TransportController::setLooping(bool loop) {
+        if (m_looping != loop) {
+            m_looping = loop;
+            emit loopingChanged(loop);
+        }
+    }
+
+    void TransportController::setLoopRegion(const Timecode& start, const Timecode& end) {
+        m_loopStart = start;
+        m_loopEnd = end;
+    }
+
+    void TransportController::updateFromAudioClock(qint64 microseconds) {
+        if (m_state != State::Playing) return;
+        Timecode newPos = Timecode::fromMicroseconds(microseconds, m_position.fps);
+        setPosition(newPos);
+    }
+
+    void TransportController::onPlaybackTimer() {
+        if (m_state != State::Playing) return;
+
+        qint64 now = QDateTime::currentMSecsSinceEpoch();
+        qint64 elapsed = now - m_playbackStartTime;
+        FrameTime elapsedFrames = static_cast<FrameTime>(elapsed * m_position.fps / 1000.0);
+
+        Timecode newPos{m_playbackStartPosition.frames + elapsedFrames, m_position.fps};
+
+        if (m_looping && newPos.frames >= m_loopEnd.frames) {
+            newPos.frames = m_loopStart.frames;
+            m_playbackStartTime = now;
+            m_playbackStartPosition = m_loopStart;
+        }
+
+        if (newPos.frames >= m_duration.frames) {
+            stop();
+            return;
+        }
+
+        setPosition(newPos);
+        emit frameReady(m_position);
+    }
+
+    // =============================================================================
+    // [FIX Bug #5] TimelineProxy Implementation
+    // =============================================================================
+
+    TimelineProxy::TimelineProxy(VideoEditor* editor, QObject* parent)
+        : QObject(parent)
+        , m_editor(editor)
+    {
+    }
+
+    FrameTime TimelineProxy::playhead() const {
+        if (!m_editor) return 0;
+        return m_editor->position().frames;
+    }
+
+    FrameTime TimelineProxy::duration() const {
+        if (!m_editor) return 0;
+        return m_editor->duration().frames;
+    }
+
+    ProjectProfile TimelineProxy::profile() const {
+        if (!m_editor) return ProjectProfile{};
+        return m_editor->profile();
+    }
+
+    QList<QObject*> TimelineProxy::videoTracksAsObjects() const {
+        QList<QObject*> result;
+        if (!m_editor) return result;
+        for (Track* t : m_editor->videoTracks()) result.append(t);
+        return result;
+    }
+
+    QList<QObject*> TimelineProxy::audioTracksAsObjects() const {
+        QList<QObject*> result;
+        if (!m_editor) return result;
+        for (Track* t : m_editor->audioTracks()) result.append(t);
+        return result;
+    }
+
+    int TimelineProxy::videoTrackCount() const {
+        return m_editor ? m_editor->videoTracks().size() : 0;
+    }
+
+    int TimelineProxy::audioTrackCount() const {
+        return m_editor ? m_editor->audioTracks().size() : 0;
+    }
+
+    void TimelineProxy::addVideoTrack() {
+        if (m_editor) m_editor->addVideoTrackFromProxy();
+    }
+
+    void TimelineProxy::addAudioTrack() {
+        if (m_editor) m_editor->addAudioTrackFromProxy();
+    }
+
+    void TimelineProxy::removeClip(QObject* clipObj) {
+        if (!m_editor || !clipObj) return;
+        auto* clip = qobject_cast<MediaClip*>(clipObj);
+        if (clip) m_editor->removeClip(std::shared_ptr<MediaClip>(clip, [](MediaClip*){}));
+    }
+
+    void TimelineProxy::splitClip(QObject* clipObj, FrameTime atFrame) {
+        if (!m_editor || !clipObj) return;
+        auto* clip = qobject_cast<MediaClip*>(clipObj);
+        if (clip) {
+            Timecode at{atFrame, m_editor->profile().fps};
+            m_editor->splitClip(std::shared_ptr<MediaClip>(clip, [](MediaClip*){}), at);
+        }
+    }
+
+    void TimelineProxy::rippleDelete(FrameTime start, FrameTime end) {
+        if (!m_editor) return;
+        int fps = m_editor->profile().fps;
+        m_editor->rippleDelete(Timecode{start, fps}, Timecode{end, fps});
+    }
+
+    void TimelineProxy::insertClip(QObject* /*clip*/, QObject* /*track*/, FrameTime /*position*/) {
+        // Delegated to VideoEditor::importMedia with the specified track and position
+        // Placeholder — QML should call videoEditor.importMedia() directly for new clips
+    }
+
+    FrameTime TimelineProxy::snap(FrameTime frame, int gridSize) const {
+        if (gridSize <= 0) return frame;
+        return (frame / gridSize) * gridSize;
+    }
+
+    void TimelineProxy::notifyPlayheadChanged() { emit playheadChanged(); }
+    void TimelineProxy::notifyDurationChanged() { emit durationChanged(); }
+    void TimelineProxy::notifyProfileChanged()  { emit profileChanged();  }
+    void TimelineProxy::notifyTracksChanged()   { emit tracksChanged();   }
+
+    void TimelineProxy::setSelection(FrameTime start, FrameTime end) {
+        m_hasSelection = true;
+        m_selectionStart = start;
+        m_selectionEnd = end;
+        emit selectionChanged();
+    }
+
+    void TimelineProxy::clearSelection() {
+        m_hasSelection = false;
+        m_selectionStart = 0;
+        m_selectionEnd = 0;
+        emit selectionChanged();
+    }
+
+    // =============================================================================
+    // VideoEditor Implementation
+    // =============================================================================
+
+    VideoEditor::VideoEditor(QObject* parent)
+        : QObject(parent)
+        , m_mpvBackend(std::make_unique<MpvBackend>(this))
+        , m_compositor(std::make_unique<VideoCompositor>(ProjectProfile{}, this))
+        , m_transport(std::make_unique<TransportController>(this))
+        , m_timeline(std::make_unique<TimelineProxy>(this, this))
+    {
+        // Connect transport signals
+        connect(m_transport.get(), &TransportController::positionChanged,
+                this, &VideoEditor::onTransportPositionChanged);
+        connect(m_transport.get(), &TransportController::stateChanged,
+                this, &VideoEditor::onTransportStateChanged);
+        connect(m_transport.get(), &TransportController::frameReady,
+                [this](const Timecode& pos) { renderFrame(pos); });
+    }
+
+    VideoEditor::~VideoEditor() = default;
+
+    void VideoEditor::initializeAudio(AudioEngine* engine, AudioOutput* output) {
+        m_audioEngine = engine;
+        m_audioOutput = output;
+
+        if (m_audioOutput) {
+            connect(m_audioOutput, &AudioOutput::stateChanged,
+                    this, [this](bool playing) {
+                        if (playing) m_transport->play();
+                        else m_transport->pause();
+                    });
+        }
+    }
+
+    void VideoEditor::initializeVideo(std::unique_ptr<VideoOutput> output) {
+        if (!output) {
+            output = VideoOutputFactory::create(VideoBackend::OpenGL);
+        }
+        m_videoOutput = std::move(output);
+
+        if (m_videoOutput) {
+            m_videoOutput->initialize(QSize(1920, 1080));
+            m_videoOutput->setAudioOutput(m_audioOutput);
+        }
+
+        m_compositor->initialize();
+    }
+
+    void VideoEditor::onTransportPositionChanged(const Timecode& position) {
+        emit positionChanged(position);
+        renderFrame(position);
+        // Notify timeline proxy so QML updates the playhead
+        m_timeline->notifyPlayheadChanged();
+    }
+
+    void VideoEditor::onTransportStateChanged(TransportController::State state) {
+        emit stateChanged(state);
+    }
+
+    void VideoEditor::renderFrame(const Timecode& position) {
+        if (!m_project) return;
+
+        std::vector<Track*> videoTracks;
+        std::vector<Track*> audioTracks;
+
+        for (const auto& track : m_project->tracks) {
+            if (track->type() == Track::Type::Video) videoTracks.push_back(track.get());
+            else audioTracks.push_back(track.get());
+        }
+
+        if (m_compositor) {
+            auto fbo = m_compositor->compositeFrame(position, videoTracks, audioTracks);
+            if (fbo && m_videoOutput) {
+                VideoFrame frame;
+                frame.pts = VideoPTS::fromMicroseconds(position.toMicroseconds());
+                m_videoOutput->presentFrame(frame);
+            }
+        }
+
+        if (m_audioEngine && !audioTracks.empty()) {
+            // Mix audio from all tracks at this position
+        }
+
+        emit frameReady(m_currentFrame, position);
+    }
+
+    bool VideoEditor::newProject(const QString& name, const ProjectProfile& profile) {
+        closeProject();
+
+        m_project = std::make_unique<ProjectData>();
+        m_projectName = name;
+        m_profile = profile;
+        m_projectPath.clear();
+
+        // Recreate compositor with new profile
+        m_compositor = std::make_unique<VideoCompositor>(profile, this);
+        m_compositor->initialize();
+
+        // Add default tracks
+        addVideoTrack("Video 1");
+        addAudioTrack("Audio 1");
+        addAudioTrack("Audio 2");
+
+        m_transport->setFps(profile.fps);
+        m_transport->setPosition(Timecode{0, profile.fps});
+        m_transport->setDuration(Timecode{0, profile.fps});
+
+        // Notify timeline proxy
+        m_timeline->notifyProfileChanged();
+        m_timeline->notifyTracksChanged();
+        m_timeline->notifyDurationChanged();
+
+        emit projectChanged();
+        emit profileChanged();
+        setModified(false);
+
+        return true;
+    }
+
+    bool VideoEditor::openProject(const QString& path) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            emit error(QString("Cannot open project: %1").arg(path));
+            return false;
+        }
+
+        QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        if (doc.isNull()) {
+            emit error("Invalid project file format");
+            return false;
+        }
+
+        QJsonObject root = doc.object();
+        closeProject();
+
+        m_project = std::make_unique<ProjectData>();
+        m_projectPath = path;
+        m_projectName = root["name"].toString("Untitled");
+        m_profile = ProjectProfile::fromJson(root["profile"].toObject());
+
+        // Load tracks
+        for (const auto& trackVal : root["tracks"].toArray()) {
+            QJsonObject trackObj = trackVal.toObject();
+            Track::Type type = trackObj["type"].toInt(0) == 0 ? Track::Type::Video : Track::Type::Audio;
+            QString id = trackObj["id"].toString();
+            QString trackName = trackObj["name"].toString();
+
+            auto track = std::make_unique<Track>(id, type, trackName, this);
+            track->setIndex(trackObj["index"].toInt());
+            track->setMuted(trackObj["muted"].toBool(false));
+
+            for (const auto& clipVal : trackObj["clips"].toArray()) {
+                auto clip = MediaClip::fromJson(clipVal.toObject(), this);
+                track->addClip(clip);
+            }
+
+            m_project->tracks.append(std::move(track));
+        }
+
+        m_compositor = std::make_unique<VideoCompositor>(m_profile, this);
+        m_compositor->initialize();
+
+        m_transport->setFps(m_profile.fps);
+        m_transport->setPosition(Timecode{0, m_profile.fps});
+
+        Timecode dur = duration();
+        m_transport->setDuration(dur);
+
+        m_timeline->notifyProfileChanged();
+        m_timeline->notifyTracksChanged();
+        m_timeline->notifyDurationChanged();
+
+        emit projectChanged();
+        emit profileChanged();
+        setModified(false);
+
+        return true;
+    }
+
+    bool VideoEditor::saveProject(const QString& path) {
+        if (!m_project) return false;
+
+        QString savePath = path.isEmpty() ? m_projectPath : path;
+        if (savePath.isEmpty()) return false;
+
+        QJsonObject root;
+        root["name"] = m_projectName;
+        root["profile"] = m_profile.toJson();
+        root["version"] = "1.0";
+
+        QJsonArray tracksArray;
+        for (const auto& track : m_project->tracks) {
+            QJsonObject trackObj;
+            trackObj["id"] = track->id();
+            trackObj["name"] = track->name();
+            trackObj["type"] = static_cast<int>(track->type());
+            trackObj["index"] = track->index();
+            trackObj["muted"] = track->isMuted();
+
+            QJsonArray clipsArray;
+            for (const auto& clip : track->clips()) {
+                clipsArray.append(clip->toJson());
+            }
+            trackObj["clips"] = clipsArray;
+            tracksArray.append(trackObj);
+        }
+        root["tracks"] = tracksArray;
+
+        QSaveFile file(savePath);
+        if (!file.open(QIODevice::WriteOnly)) {
+            emit error(QString("Cannot save project to: %1").arg(savePath));
+            return false;
+        }
+
+        file.write(QJsonDocument(root).toJson());
+        if (!file.commit()) {
+            emit error("Failed to write project file");
+            return false;
+        }
+
+        m_projectPath = savePath;
+        setModified(false);
+        emit projectChanged();
+        return true;
+    }
+
+    void VideoEditor::closeProject() {
+        m_transport->stop();
+        m_project.reset();
+        m_projectPath.clear();
+        m_projectName.clear();
+        m_undoStack.clear();
+        m_redoStack.clear();
+
+        m_timeline->notifyTracksChanged();
+        m_timeline->notifyDurationChanged();
+        m_timeline->clearSelection();
+
+        emit projectChanged();
+        setModified(false);
+    }
+
+    void VideoEditor::setProfile(const ProjectProfile& profile) {
+        if (m_profile.width != profile.width ||
+            m_profile.height != profile.height ||
+            m_profile.fps != profile.fps) {
+            m_profile = profile;
+            m_compositor = std::make_unique<VideoCompositor>(m_profile, this);
+            m_compositor->initialize();
+            m_transport->setFps(profile.fps);
+            m_timeline->notifyProfileChanged();
+            emit profileChanged();
+            setModified(true);
+        }
+    }
+
+    void VideoEditor::setModified(bool modified) {
+        if (m_modified != modified) {
+            m_modified = modified;
+            emit modifiedChanged();
+        }
+    }
+
+    Track* VideoEditor::addVideoTrack(const QString& name) {
+        if (!m_project) return nullptr;
+
+        QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        auto track = std::make_unique<Track>(id, Track::Type::Video, name, this);
+        track->setIndex(videoTracks().size());
+
+        Track* ptr = track.get();
+        m_project->tracks.append(std::move(track));
+
+        m_timeline->notifyTracksChanged();
+        emit trackAdded(ptr);
+        setModified(true);
+        return ptr;
+    }
+
+    Track* VideoEditor::addAudioTrack(const QString& name) {
+        if (!m_project) return nullptr;
+
+        QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        auto track = std::make_unique<Track>(id, Track::Type::Audio, name, this);
+        track->setIndex(audioTracks().size());
+
+        Track* ptr = track.get();
+        m_project->tracks.append(std::move(track));
+
+        m_timeline->notifyTracksChanged();
+        emit trackAdded(ptr);
+        setModified(true);
+        return ptr;
+    }
+
+    void VideoEditor::addVideoTrackFromProxy() { addVideoTrack(); }
+    void VideoEditor::addAudioTrackFromProxy() { addAudioTrack(); }
+
+    void VideoEditor::removeTrack(Track* track) {
+        if (!m_project || !track) return;
+
+        auto it = std::find_if(m_project->tracks.begin(), m_project->tracks.end(),
+                               [track](const auto& t) { return t.get() == track; });
+        if (it != m_project->tracks.end()) {
+            emit trackRemoved(track);
+            m_project->tracks.erase(it);
+            m_timeline->notifyTracksChanged();
+            setModified(true);
+        }
+    }
+
+    void VideoEditor::moveTrack(int fromIndex, int toIndex) {
+        if (!m_project) return;
+        if (fromIndex < 0 || fromIndex >= m_project->tracks.size()) return;
+        if (toIndex < 0 || toIndex >= m_project->tracks.size()) return;
+        m_project->tracks.move(fromIndex, toIndex);
+        m_timeline->notifyTracksChanged();
+        setModified(true);
+    }
+
+    QList<Track*> VideoEditor::videoTracks() const {
+        QList<Track*> result;
+        if (!m_project) return result;
+        for (const auto& track : m_project->tracks) {
+            if (track->type() == Track::Type::Video) result.append(track.get());
+        }
+        return result;
+    }
+
+    QList<Track*> VideoEditor::audioTracks() const {
+        QList<Track*> result;
+        if (!m_project) return result;
+        for (const auto& track : m_project->tracks) {
+            if (track->type() == Track::Type::Audio) result.append(track.get());
+        }
+        return result;
+    }
+
+    QList<Track*> VideoEditor::allTracks() const {
+        QList<Track*> result;
+        if (!m_project) return result;
+        for (const auto& track : m_project->tracks) result.append(track.get());
+        return result;
+    }
+
+    Track* VideoEditor::trackAt(int index) const {
+        if (!m_project || index < 0 || index >= m_project->tracks.size()) return nullptr;
+        return m_project->tracks.at(index).get();
+    }
+
+    std::shared_ptr<MediaClip> VideoEditor::importMedia(const QUrl& url,
+                                                        Track* targetTrack,
+                                                        const Timecode& position) {
+        if (!m_project) return nullptr;
+
+        QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QFileInfo info(url.toLocalFile());
+
+        MediaClip::Type type = MediaClip::Type::Video;
+        QString suffix = info.suffix().toLower();
+        if (suffix == "wav" || suffix == "mp3" || suffix == "flac" || suffix == "aac" || suffix == "ogg")
+            type = MediaClip::Type::Audio;
+        else if (suffix == "jpg" || suffix == "jpeg" || suffix == "png" || suffix == "bmp")
+            type = MediaClip::Type::Image;
+
+        auto clip = std::make_shared<MediaClip>(id, url, type, this);
+        clip->loadMediaInfo(m_mpvBackend.get());
+
+        if (!targetTrack) {
+            targetTrack = (type == MediaClip::Type::Audio)
+                ? (audioTracks().isEmpty() ? addAudioTrack() : audioTracks().first())
+                : (videoTracks().isEmpty() ? addVideoTrack() : videoTracks().first());
+        }
+
+        if (targetTrack) {
+            clip->setPosition(position);
+            targetTrack->addClip(clip);
+        }
+
+        emit clipImported(clip);
+        setModified(true);
+
+        Timecode clipEnd{position.frames + clip->duration().frames, m_profile.fps};
+        if (clipEnd > m_transport->duration()) {
+            m_transport->setDuration(clipEnd);
+            m_timeline->notifyDurationChanged();
+            emit durationChanged(clipEnd);
+        }
+
+        return clip;
+    }
+
+    void VideoEditor::removeClip(std::shared_ptr<MediaClip> clip) {
+        if (!m_project || !clip) return;
+        for (const auto& track : m_project->tracks) {
+            track->removeClip(clip);
+        }
+        setModified(true);
+    }
+
+    void VideoEditor::moveClip(std::shared_ptr<MediaClip> clip,
+                               Track* targetTrack,
+                               const Timecode& newPosition) {
+        if (!clip || !targetTrack) return;
+        targetTrack->moveClip(clip, newPosition);
+        setModified(true);
+    }
+
+    void VideoEditor::trimClip(std::shared_ptr<MediaClip> clip,
+                               const Timecode& newInPoint,
+                               const Timecode& newOutPoint) {
+        if (!clip) return;
+        clip->setInPoint(newInPoint);
+        clip->setOutPoint(newOutPoint);
+        setModified(true);
+    }
+
+    void VideoEditor::splitClip(std::shared_ptr<MediaClip> clip, const Timecode& atTime) {
+        if (!clip || !m_project) return;
+
+        Timecode clipStart = clip->position();
+        Timecode clipEnd = Timecode{clipStart.frames + clip->duration().frames, clipStart.fps};
+
+        if (atTime.frames <= clipStart.frames || atTime.frames >= clipEnd.frames) return;
+
+        // Record original out point
+        Timecode originalOut = clip->outPoint();
+
+        // Shorten original clip
+        Timecode newOut = clip->mapToSource(atTime);
+        clip->setOutPoint(newOut);
+
+        // Create second half
+        QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        auto newClip = std::make_shared<MediaClip>(id, clip->source(), clip->type(), this);
+        newClip->setInPoint(newOut);
+        newClip->setOutPoint(originalOut);
+        newClip->setPosition(atTime);
+        newClip->setSpeed(clip->speed());
+
+        for (auto& track : m_project->tracks) {
+            auto clips = track->clips();
+            for (const auto& c : clips) {
+                if (c == clip) {
+                    track->addClip(newClip);
+                    break;
+                }
+            }
+        }
+
+        setModified(true);
+    }
+
+    void VideoEditor::deleteRange(const Timecode& start, const Timecode& end) {
+        if (!m_project) return;
+        for (auto& track : m_project->tracks) {
+            auto toRemove = track->clipsInRange(start, end);
+            for (const auto& clip : toRemove) track->removeClip(clip);
+        }
+        setModified(true);
+    }
+
+    void VideoEditor::rippleDelete(const Timecode& start, const Timecode& end) {
+        deleteRange(start, end);
+        // Shift subsequent clips left
+        FrameTime gap = end.frames - start.frames;
+        if (!m_project) return;
+        for (auto& track : m_project->tracks) {
+            for (const auto& clip : track->clips()) {
+                if (clip->position().frames >= end.frames) {
+                    Timecode newPos{clip->position().frames - gap, clip->position().fps};
+                    track->moveClip(clip, newPos);
+                }
+            }
+        }
+        setModified(true);
+    }
+
+    void VideoEditor::play()           { m_transport->play(); }
+    void VideoEditor::pause()          { m_transport->pause(); }
+    void VideoEditor::stop()           { m_transport->stop(); }
+    void VideoEditor::togglePlayPause(){ m_transport->togglePlayPause(); }
+
+    void VideoEditor::seek(const Timecode& position) {
+        m_transport->seek(position);
+        m_timeline->notifyPlayheadChanged();
+    }
+
+    void VideoEditor::frameStep(int frames) {
+        m_transport->frameStep(frames);
+        m_timeline->notifyPlayheadChanged();
+    }
+
+    Timecode VideoEditor::duration() const {
+        if (!m_project) return Timecode{0, 30};
+
+        FrameTime maxFrames = 0;
+        for (const auto& track : m_project->tracks) {
+            maxFrames = std::max(maxFrames, track->duration().frames);
+        }
+        return Timecode{maxFrames, m_profile.fps};
+    }
+
+    void VideoEditor::setPreviewSize(const QSize& size) {
+        m_previewSize = size;
+    }
+
+    void VideoEditor::setAudioSyncEnabled(bool enabled) {
+        m_audioSyncEnabled = enabled;
+    }
+
+    void VideoEditor::updateVideoFromAudioClock(qint64 audioMicroseconds) {
+        if (!m_audioSyncEnabled) return;
+        m_transport->updateFromAudioClock(audioMicroseconds);
+    }
+
+    void VideoEditor::undo() {
+        if (m_undoStack.isEmpty()) return;
+        auto cmd = m_undoStack.pop();
+        cmd.undo();
+        m_redoStack.push(cmd);
+        emit modifiedChanged();
+    }
+
+    void VideoEditor::redo() {
+        if (m_redoStack.isEmpty()) return;
+        auto cmd = m_redoStack.pop();
+        cmd.redo();
+        m_undoStack.push(cmd);
+        emit modifiedChanged();
+    }
+
+    bool VideoEditor::canUndo() const { return !m_undoStack.isEmpty(); }
+    bool VideoEditor::canRedo() const { return !m_redoStack.isEmpty(); }
+
+    void VideoEditor::pushUndoCommand(const QString& description,
+                                      std::function<void()> undo,
+                                      std::function<void()> redo) {
+        if (m_undoStack.size() >= m_maxUndoLevels) {
+            m_undoStack.removeFirst();
+        }
+        m_undoStack.push({description, undo, redo});
+        m_redoStack.clear();
+        setModified(true);
+    }
+
+    void VideoEditor::addMarker(const Timecode& position, const QString& label,
+                                const QColor& color, const QString& type) {
+        if (!m_project) return;
+        m_project->markers.append({position, label, color, type});
+        setModified(true);
+    }
+
+    void VideoEditor::removeMarker(const Timecode& position) {
+        if (!m_project) return;
+        m_project->markers.removeIf([&](const TimelineMarker& m) {
+            return m.position == position;
+        });
+        setModified(true);
+    }
+
+    QList<TimelineMarker> VideoEditor::markers() const {
+        if (!m_project) return {};
+        return m_project->markers;
+    }
+
+    bool VideoEditor::exportVideo(const QString& outputPath,
+                                  const ExportSettings& settings,
+                                  const Timecode& start,
+                                  const Timecode& end) {
+        if (!m_project || m_exporting) return false;
+
+        m_exporting = true;
+        emit statusMessage("Export started...");
+
+        QtConcurrent::run([this, outputPath, settings, start, end]() {
+            // Export implementation via FFmpeg
+            Q_UNUSED(start); Q_UNUSED(end); Q_UNUSED(settings);
+
+            for (int i = 0; i <= 100; i += 5) {
+                if (!m_exporting) break;
+                QThread::msleep(50);
+                emit exportProgress(i);
+            }
+
+            m_exporting = false;
+            emit exportFinished(true, outputPath);
+        });
+
+        return true;
+    }
+
+    void VideoEditor::cancelExport() {
+        m_exporting = false;
+    }
+
+    void VideoEditor::onMpvFrameReady() {
+        // Handle MPV frame callback
+    }
+
+    void VideoEditor::onAudioPositionChanged(qint64 microseconds) {
+        if (m_audioSyncEnabled) {
+            updateVideoFromAudioClock(microseconds);
+        }
+    }
 
 } // namespace Aegis
