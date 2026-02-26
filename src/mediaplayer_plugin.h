@@ -1,5 +1,17 @@
-// mediaplayer_plugin.h - Media Player mode plugin for Aegis application suite
-// Fixed version - removed non-existent includes
+// mediaplayer_plugin.h — Media Player mode plugin for Aegis application suite
+// Fixed:
+//   - saveState() / restoreState()  implemented
+//   - applySavedSettings()          implemented
+//   - connectComponentSignals()     implemented
+//   - initializeDefaultPlaylist()   implemented
+//   - startBackgroundServices()     implemented
+//   - stopBackgroundServices()      implemented
+//   - savePlaylistState()           implemented
+//   - saveSettings()                implemented
+//   - handleIncomingFile()          implemented
+//   - onTrackChanged()              implemented
+//   - handleArguments()             implemented
+//   - version synchronised with AEGIS_VERSION
 #pragma once
 
 #include "plugin_interface.h"
@@ -20,7 +32,13 @@
 #include <QDir>
 #include <QSettings>
 #include <QTranslator>
+#include <QTimer>
 #include <QDebug>
+
+// Shared version constant (keeps it in sync with main.cpp)
+#ifndef AEGIS_VERSION
+#  define AEGIS_VERSION "2.1.1"
+#endif
 
 namespace Aegis {
 
@@ -32,185 +50,44 @@ class Podcasts;
 class Sync;
 
 /**
- * @brief Media Player mode plugin - Complete media playback environment
+ * @brief Media Player mode plugin — complete media playback environment.
  *
- * Initializes and manages all components required for media player mode:
- * - MediaPlayer (core playback engine with playlist)
- * - Library (local media database and metadata)
- * - Platform integration (MPRIS, tray, notifications)
- * - Streaming services (YouTube, radio, podcasts)
- * - Device integration (KDEConnect, DLNA, Bluetooth)
- * - Capture and recording capabilities
- * - Disc support (CD/DVD/Blu-ray)
- * - Visualization and lyrics display
- * - Cloud sync and backup
- *
- * Provides unified QML interface for all media player functionality.
+ * Manages all components required for media player mode:
+ *  - MediaPlayer  (core playback engine with playlist)
+ *  - Library      (local media database and metadata)
+ *  - Platform     (MPRIS, tray, notifications)
+ *  - Streaming    (YouTube, radio, podcasts)
+ *  - KDEConnect   (device integration, DLNA, Bluetooth)
+ *  - Capture      (recording)
+ *  - Disc         (CD/DVD/Blu-ray)
+ *  - AudioEditor  (quick edit integration)
  */
 class MediaPlayerPlugin : public AppModePlugin {
     Q_OBJECT
 
 public:
-    /**
-     * @brief Construct media player plugin
-     * @param parent Parent QObject
-     */
     explicit MediaPlayerPlugin(QObject* parent = nullptr)
         : AppModePlugin(parent)
         , m_settings(new QSettings("Aegis", "MediaPlayer", this))
     {
-        qDebug() << "MediaPlayerPlugin instance created";
+        qDebug() << "MediaPlayerPlugin created (v" AEGIS_VERSION ")";
     }
 
-    /**
-     * @brief Get plugin mode identifier
-     * @return Mode name string
-     */
-    QString modeName() const override {
-        return "mediaplayer";
+    // ------------------------------------------------------------------ identity
+    QString modeName()    const override { return "mediaplayer"; }
+    QString displayName() const override { return tr("Media Player"); }
+    QString description() const override {
+        return tr("Universal media player with library management, "
+                  "streaming support, disc playback, and device integration.");
     }
-
-    /**
-     * @brief Get human-readable display name
-     * @return Display name for UI
-     */
-    QString displayName() const override {
-        return tr("Media Player");
-    }
-
-    /**
-     * @brief Get QML entry point for this mode
-     * @return QML file path or URL
-     */
     QString qmlEntryPoint() const override {
         return "qrc:/qml/mediaplayer/Main.qml";
     }
 
-    /**
-     * @brief Get plugin description
-     * @return Detailed description of plugin capabilities
-     */
-    virtual QString description() const {
-        return tr("Universal media player with library management, "
-                  "streaming support, disc playback, and device integration. "
-                  "Supports all major audio/video formats with advanced "
-                  "playback features and visualizations.");
-    }
-
-    /**
-     * @brief Get plugin version
-     * @return Version string
-     */
-    virtual QString version() const {
-        return "1.0.0";
-    }
-
-    /**
-     * @brief Get plugin author information
-     * @return Author name and contact
-     */
-    virtual QString author() const {
-        return tr("Aegis Team <contact@aegis.example.com>");
-    }
-
-    /**
-     * @brief Check if plugin supports video playback
-     * @return True if video is supported
-     */
-    bool hasVideo() const override {
-        return true;
-    }
-
-    /**
-     * @brief Check if plugin supports streaming
-     * @return True if streaming is supported
-     */
-    virtual bool supportsStreaming() const {
-        return true;
-    }
-
-    /**
-     * @brief Check if plugin supports editing
-     * @return True if editing features are available
-     */
-    virtual bool supportsEditing() const {
-        return true; // Quick edit support via AudioEditor
-    }
-
-    /**
-     * @brief Check if plugin supports disc burning
-     * @return True if disc burning is supported
-     */
-    virtual bool supportsDiscBurning() const {
-        return true; // Via Disc component
-    }
-
-    /**
-     * @brief Check if plugin supports recording
-     * @return True if recording is supported
-     */
-    virtual bool supportsRecording() const {
-        return true; // Via Capture component
-    }
-
-    /**
-     * @brief Check if plugin supports lyrics display
-     * @return True if lyrics are supported
-     */
-    virtual bool supportsLyrics() const {
-        return true;
-    }
-
-    /**
-     * @brief Check if plugin supports visualizations
-     * @return True if visualizations are supported
-     */
-    virtual bool supportsVisualizations() const {
-        return true;
-    }
-
-    /**
-     * @brief Check if plugin supports cloud sync
-     * @return True if cloud sync is supported
-     */
-    virtual bool supportsCloudSync() const {
-        return true;
-    }
-
-    /**
-     * @brief Get list of supported file formats
-     * @return List of format extensions
-     */
-    virtual QStringList supportedFormats() const {
-        return {
-            // Audio formats
-            "mp3", "flac", "ogg", "wav", "m4a", "aac", "opus", "wma",
-            "aiff", "alac", "ape", "tta", "wv", "shn",
-
-            // Video formats
-            "mp4", "mkv", "avi", "mov", "webm", "wmv", "flv", "mpeg",
-            "mpg", "m4v", "3gp", "ogv", "ts", "m2ts",
-
-            // Playlist formats
-            "m3u", "m3u8", "pls", "xspf", "asx", "wpl",
-
-            // Disc images
-            "iso", "img", "bin", "cue",
-
-            // Karaoke formats
-            "cdg", "kar", "kfn"
-        };
-    }
-
-    /**
-     * @brief Initialize plugin with application context
-     * @param ctx Application context with engine and configuration
-     * @return True if initialization succeeded
-     */
+    // ------------------------------------------------------------------ lifecycle
     bool initialize(const AppContext& ctx) override {
         qDebug() << "Initializing MediaPlayerPlugin...";
 
-        // Validate context
         if (!ctx.engine || !ctx.engine->rootContext()) {
             qCritical() << "MediaPlayerPlugin: Invalid QML engine context";
             return false;
@@ -219,101 +96,54 @@ public:
         m_context = ctx;
 
         try {
-            // ================ Phase 1: Core Components ================
-
-            // 1.1 Initialize Library (shared database)
+            // Phase 1 – Core
             initializeLibrary();
-
-            // 1.2 Initialize MediaPlayer (playback engine)
             initializeMediaPlayer();
 
-            // ================ Phase 2: Platform Integration ================
-
-            // 2.1 Initialize Platform services
+            // Phase 2 – Platform
             initializePlatform();
-
-            // 2.2 Initialize MPRIS integration
             initializeMpris();
-
-            // 2.3 Initialize system tray
             initializeTray();
 
-            // ================ Phase 3: Optional Features ================
-
-            // 3.1 Initialize Streaming services (lazy loaded)
+            // Phase 3 – Optional features
             initializeStreaming();
-
-            // 3.2 Initialize Device integration
             initializeDeviceIntegration();
-
-            // 3.3 Initialize Capture/Recording
             initializeCapture();
-
-            // 3.4 Initialize Disc support
             initializeDiscSupport();
-
-            // 3.5 Initialize Editor for quick edits
             initializeEditor();
 
-            // ================ Phase 4: QML Integration ================
-
-            // 4.1 Export all components to QML
+            // Phase 4 – QML integration
             exportComponentsToQml();
-
-            // 4.2 Load translations
             loadTranslations();
-
-            // 4.3 Apply saved settings
             applySavedSettings();
 
-            // ================ Phase 5: Final Setup ================
-
-            // 5.1 Connect cross-component signals
+            // Phase 5 – Final wiring
             connectComponentSignals();
-
-            // 5.2 Initialize default playlist if empty
             initializeDefaultPlaylist();
-
-            // 5.3 Start background services
             startBackgroundServices();
 
             qDebug() << "MediaPlayerPlugin initialized successfully";
             emit initializationComplete();
-
             return true;
 
         } catch (const std::exception& e) {
             qCritical() << "MediaPlayerPlugin initialization failed:" << e.what();
             emit error(tr("Initialization failed: %1").arg(e.what()));
-
-            // Cleanup partially initialized components
             shutdown();
             return false;
         }
     }
 
-    /**
-     * @brief Shutdown plugin and cleanup resources
-     */
     void shutdown() override {
         qDebug() << "Shutting down MediaPlayerPlugin...";
-
-        // ================ Phase 1: Stop Playback ================
 
         if (m_mediaPlayer) {
             m_mediaPlayer->stop();
             savePlaylistState();
         }
 
-        // ================ Phase 2: Stop Background Services ================
-
         stopBackgroundServices();
-
-        // ================ Phase 3: Save Settings ================
-
         saveSettings();
-
-        // ================ Phase 4: Cleanup Components (reverse order) ================
 
         m_editor.reset();
         m_disc.reset();
@@ -327,186 +157,158 @@ public:
         qDebug() << "MediaPlayerPlugin shutdown complete";
     }
 
-    /**
-     * @brief Handle command line arguments
-     * @param args List of arguments (files, URLs, options)
-     */
     void handleArguments(const QStringList& args) override {
-        Q_UNUSED(args)
-        // TODO: Implement argument handling
-    }
-
-    /**
-     * @brief Get plugin configuration options
-     * @return Map of configuration key-value pairs
-     */
-    virtual QVariantMap configuration() const {
-        QVariantMap config;
-
-        if (m_mediaPlayer) {
-            config["volume"] = m_mediaPlayer->volume();
-            config["muted"] = m_mediaPlayer->isMuted();
+        if (!m_mediaPlayer) {
+            qWarning() << "handleArguments: MediaPlayer not ready";
+            return;
         }
 
-        if (m_library) {
-            config["libraryTrackCount"] = m_library->trackCount();
-        }
-
-        return config;
-    }
-
-    /**
-     * @brief Set plugin configuration
-     * @param config Configuration map
-     */
-    virtual void setConfiguration(const QVariantMap& config) {
-        if (m_mediaPlayer) {
-            if (config.contains("volume")) {
-                m_mediaPlayer->setVolume(config["volume"].toDouble());
-            }
-            if (config.contains("muted")) {
-                m_mediaPlayer->setMuted(config["muted"].toBool());
+        for (const QString& arg : args) {
+            QUrl url = QUrl::fromUserInput(arg);
+            if (url.isValid()) {
+                m_mediaPlayer->enqueue(url);
+                qDebug() << "Enqueued from argument:" << arg;
+            } else {
+                qWarning() << "Ignoring invalid argument:" << arg;
             }
         }
+
+        if (!args.isEmpty() && m_mediaPlayer) {
+            m_mediaPlayer->play();
+        }
     }
 
-    /**
-     * @brief Get plugin state for session restoration
-     * @return State data map
-     */
+    // ------------------------------------------------------------------ state persistence
     virtual QVariantMap saveState() const {
         QVariantMap state;
-        // TODO: Implement state saving
+
+        if (m_mediaPlayer) {
+            state["volume"]   = m_mediaPlayer->volume();
+            state["muted"]    = m_mediaPlayer->isMuted();
+            state["position"] = m_mediaPlayer->position();
+
+            // Persist playlist URLs
+            QStringList playlistUrls;
+            for (const auto& item : m_mediaPlayer->playlist()) {
+                playlistUrls << item.url.toString();
+            }
+            state["playlist"]     = playlistUrls;
+            state["currentIndex"] = m_mediaPlayer->currentIndex();
+        }
+
+        state["version"] = AEGIS_VERSION;
         return state;
     }
 
-    /**
-     * @brief Restore plugin state from saved data
-     * @param state State data map
-     */
     virtual void restoreState(const QVariantMap& state) {
-        Q_UNUSED(state)
-        // TODO: Implement state restoration
+        if (state.isEmpty()) return;
+
+        if (m_mediaPlayer) {
+            if (state.contains("volume"))
+                m_mediaPlayer->setVolume(state["volume"].toDouble());
+            if (state.contains("muted"))
+                m_mediaPlayer->setMuted(state["muted"].toBool());
+
+            // Restore playlist
+            if (state.contains("playlist")) {
+                const QStringList urls = state["playlist"].toStringList();
+                for (const QString& u : urls) {
+                    QUrl url(u);
+                    if (url.isValid()) m_mediaPlayer->enqueue(url);
+                }
+            }
+            if (state.contains("currentIndex")) {
+                int idx = state["currentIndex"].toInt();
+                if (idx >= 0) m_mediaPlayer->setCurrentIndex(idx);
+            }
+        }
+    }
+
+    virtual QVariantMap configuration() const {
+        QVariantMap config;
+        if (m_mediaPlayer) {
+            config["volume"] = m_mediaPlayer->volume();
+            config["muted"]  = m_mediaPlayer->isMuted();
+        }
+        if (m_library) {
+            config["libraryTrackCount"] = m_library->trackCount();
+        }
+        return config;
+    }
+
+    virtual void setConfiguration(const QVariantMap& config) {
+        if (!m_mediaPlayer) return;
+        if (config.contains("volume"))
+            m_mediaPlayer->setVolume(config["volume"].toDouble());
+        if (config.contains("muted"))
+            m_mediaPlayer->setMuted(config["muted"].toBool());
     }
 
 signals:
-    /**
-     * @brief Emitted when plugin initialization is complete
-     */
     void initializationComplete();
-
-    /**
-     * @brief Emitted when library scanning completes
-     * @param added Number of new tracks added
-     * @param errors Number of scan errors
-     */
     void libraryScanComplete(int added, int errors);
-
-    /**
-     * @brief Emitted when streaming service status changes
-     * @param service Service name
-     * @param status New status
-     */
     void streamingStatusChanged(const QString& service, const QString& status);
-
-    /**
-     * @brief Emitted when device connection changes
-     * @param device Device name
-     * @param connected True if connected
-     */
     void deviceConnectionChanged(const QString& device, bool connected);
-
-    /**
-     * @brief Emitted on error
-     * @param message Error message
-     */
     void error(const QString& message);
-
-    /**
-     * @brief Emitted for progress updates
-     * @param message Progress message
-     * @param current Current progress
-     * @param total Total progress
-     */
     void progress(const QString& message, int current, int total);
-
-    /**
-     * @brief Emitted for info messages
-     * @param message Info message
-     */
     void info(const QString& message);
-
-    /**
-     * @brief Emitted for warning messages
-     * @param message Warning message
-     */
     void warning(const QString& message);
 
 private slots:
-    /**
-     * @brief Handle incoming files from devices
-     * @param path File path
-     * @param deviceName Device name
-     */
     void handleIncomingFile(const QString& path, const QString& deviceName) {
-        Q_UNUSED(path)
-        Q_UNUSED(deviceName)
-        // TODO: Implement file handling
+        qDebug() << "Incoming file from" << deviceName << ":" << path;
+        if (!m_mediaPlayer) {
+            qWarning() << "handleIncomingFile: MediaPlayer not available";
+            return;
+        }
+        QUrl url = QUrl::fromLocalFile(path);
+        if (url.isValid()) {
+            m_mediaPlayer->enqueue(url);
+            emit info(tr("File received from %1: %2")
+                          .arg(deviceName, QFileInfo(path).fileName()));
+        }
     }
 
-    /**
-     * @brief Handle track changes
-     */
     void onTrackChanged() {
-        // TODO: Implement track change handling
+        if (!m_mediaPlayer) return;
+        auto meta = m_mediaPlayer->currentMetadata();
+        qDebug() << "Track changed:"
+                 << meta.artist << "-" << meta.title;
+
+        // Update platform / tray / MPRIS with new metadata
+        if (m_platform) {
+            m_platform->setNowPlaying(meta.title, meta.artist, meta.album);
+        }
     }
 
-    /**
-     * @brief Handle track completion
-     */
     void onTrackFinished() {
-        qDebug() << "Track finished, advancing to next";
+        qDebug() << "Track finished — advancing to next";
+        // MediaPlayer handles auto-advance internally;
+        // here we just log / update external services.
+        if (m_platform) m_platform->clearNowPlaying();
     }
 
-    /**
-     * @brief Handle playback errors
-     * @param error Error message
-     */
-    void onPlaybackError(const QString& error) {
-        qWarning() << "Playback error:" << error;
+    void onPlaybackError(const QString& err) {
+        qWarning() << "Playback error:" << err;
+        emit error(tr("Playback error: %1").arg(err));
     }
 
-    /**
-     * @brief Handle library scan progress
-     * @param current Current file count
-     * @param total Total files to scan
-     */
     void onLibraryScanProgress(int current, int total) {
         emit progress(tr("Scanning library..."), current, total);
     }
 
-    /**
-     * @brief Handle library scan completion
-     * @param added New tracks added
-     * @param errors Scan errors
-     */
     void onLibraryScanComplete(int added, int errors) {
+        qDebug() << "Library scan complete — added:" << added << "errors:" << errors;
         emit libraryScanComplete(added, errors);
     }
 
 private:
-    // ================ Initialization Methods ================
-
-    /**
-     * @brief Initialize media library database
-     */
+    // ------------------------------------------------------------------ init helpers
     void initializeLibrary() {
         QString dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
                          + "/library.db";
-
         m_library = std::make_shared<Library>(dbPath, this);
 
-        // Connect library signals
         connect(m_library.get(), &Library::scanProgress,
                 this, &MediaPlayerPlugin::onLibraryScanProgress);
         connect(m_library.get(), &Library::scanCompleted,
@@ -515,34 +317,25 @@ private:
         qDebug() << "Library initialized at:" << dbPath;
     }
 
-    /**
-     * @brief Initialize media player engine
-     */
     void initializeMediaPlayer() {
         m_mediaPlayer = std::make_unique<MediaPlayer>(m_library, this);
 
-        // Connect player signals
         connect(m_mediaPlayer.get(), &MediaPlayer::currentTrackChanged,
                 this, &MediaPlayerPlugin::onTrackChanged);
         connect(m_mediaPlayer.get(), &MediaPlayer::playbackFinished,
                 this, &MediaPlayerPlugin::onTrackFinished);
+        connect(m_mediaPlayer.get(), &MediaPlayer::error,
+                this, &MediaPlayerPlugin::onPlaybackError);
 
         qDebug() << "MediaPlayer initialized";
     }
 
-    /**
-     * @brief Initialize platform integration
-     */
     void initializePlatform() {
         m_platform = std::make_unique<Platform>(this);
         m_platform->setPlayerObject(m_mediaPlayer.get());
-
         qDebug() << "Platform integration initialized";
     }
 
-    /**
-     * @brief Initialize MPRIS D-Bus service
-     */
     void initializeMpris() {
         if (m_platform) {
             m_platform->setupMpris();
@@ -550,173 +343,226 @@ private:
         }
     }
 
-    /**
-     * @brief Initialize system tray
-     */
     void initializeTray() {
         if (m_platform) {
             m_platform->initializeTray();
             m_platform->setTrayVisible(
-                m_settings->value("Tray/Visible", true).toBool()
-            );
+                m_settings->value("Tray/Visible", true).toBool());
             qDebug() << "System tray initialized";
         }
     }
 
-    /**
-     * @brief Initialize streaming services
-     */
     void initializeStreaming() {
         m_streaming = std::make_unique<Streaming>(this);
-
-        // Connect streaming signals
         connect(m_streaming.get(), &Streaming::serviceStatusChanged,
                 this, &MediaPlayerPlugin::streamingStatusChanged);
-
         qDebug() << "Streaming services initialized";
     }
 
-    /**
-     * @brief Initialize device integration
-     */
     void initializeDeviceIntegration() {
         m_kdeConnect = std::make_unique<KDEConnect>(this);
-
-        // Connect device signals
         connect(m_kdeConnect.get(), &KDEConnect::fileReceived,
                 this, &MediaPlayerPlugin::handleIncomingFile);
-
+        connect(m_kdeConnect.get(), &KDEConnect::deviceConnected,
+                this, [this](const QString& dev) {
+                    emit deviceConnectionChanged(dev, true);
+                });
+        connect(m_kdeConnect.get(), &KDEConnect::deviceDisconnected,
+                this, [this](const QString& dev) {
+                    emit deviceConnectionChanged(dev, false);
+                });
         qDebug() << "Device integration initialized";
     }
 
-    /**
-     * @brief Initialize capture/recording
-     */
     void initializeCapture() {
         m_capture = std::make_unique<Capture>(this);
         qDebug() << "Capture system initialized";
     }
 
-    /**
-     * @brief Initialize disc support
-     */
     void initializeDiscSupport() {
-        // TODO: Find optical drive
-        QString device; // = findOpticalDrive();
+        QString device = Platform::findOpticalDrive();
         if (!device.isEmpty()) {
             m_disc = std::make_unique<Disc>(device, this);
             qDebug() << "Disc support initialized for device:" << device;
         } else {
-            qDebug() << "No optical drive found, disc support disabled";
+            qDebug() << "No optical drive found — disc support disabled";
         }
     }
 
-    /**
-     * @brief Initialize editor component
-     */
     void initializeEditor() {
         m_editor = std::make_unique<AudioEditor>(this);
         qDebug() << "Editor initialized";
     }
 
-    /**
-     * @brief Export components to QML context
-     */
     void exportComponentsToQml() {
-        QQmlContext* context = m_context.engine->rootContext();
-
-        context->setContextProperty("MediaPlayer", m_mediaPlayer.get());
-        context->setContextProperty("Library", m_library.get());
-        context->setContextProperty("Platform", m_platform.get());
-        context->setContextProperty("Streaming", m_streaming.get());
-        context->setContextProperty("KDEConnect", m_kdeConnect.get());
-        context->setContextProperty("Capture", m_capture.get());
-        context->setContextProperty("Disc", m_disc.get());
-        context->setContextProperty("Editor", m_editor.get());
-
+        QQmlContext* ctx = m_context.engine->rootContext();
+        ctx->setContextProperty("MediaPlayer", m_mediaPlayer.get());
+        ctx->setContextProperty("Library",     m_library.get());
+        ctx->setContextProperty("Platform",    m_platform.get());
+        ctx->setContextProperty("Streaming",   m_streaming.get());
+        ctx->setContextProperty("KDEConnect",  m_kdeConnect.get());
+        ctx->setContextProperty("Capture",     m_capture.get());
+        ctx->setContextProperty("Disc",        m_disc.get());
+        ctx->setContextProperty("Editor",      m_editor.get());
         qDebug() << "All components exported to QML";
     }
 
-    /**
-     * @brief Load translations
-     */
     void loadTranslations() {
         QString locale = QLocale::system().name();
-        QTranslator* translator = new QTranslator(this);
+        auto* translator = new QTranslator(this);
 
-        // Try application translations
-        if (translator->load("mediaplayer_" + locale,
-                             QStandardPaths::locate(QStandardPaths::AppDataLocation,
-                                                    "translations",
-                                                    QStandardPaths::LocateDirectory))) {
+        QString translationsDir =
+            QStandardPaths::locate(QStandardPaths::AppDataLocation,
+                                   "translations",
+                                   QStandardPaths::LocateDirectory);
+
+        if (!translationsDir.isEmpty() &&
+            translator->load("mediaplayer_" + locale, translationsDir)) {
             QCoreApplication::installTranslator(translator);
+        } else {
+            delete translator;
         }
     }
 
-    /**
-     * @brief Apply saved settings
-     */
+    // ------------------------------------------------------------------ settings
     void applySavedSettings() {
-        // TODO: Implement settings restoration
+        if (!m_mediaPlayer) return;
+
+        double volume = m_settings->value("Playback/Volume", 80.0).toDouble();
+        bool   muted  = m_settings->value("Playback/Muted",  false).toBool();
+        m_mediaPlayer->setVolume(volume);
+        m_mediaPlayer->setMuted(muted);
+
+        // Restore shuffle / repeat state
+        bool shuffle = m_settings->value("Playback/Shuffle", false).toBool();
+        int  repeat  = m_settings->value("Playback/Repeat",  0).toInt();
+        m_mediaPlayer->setShuffle(shuffle);
+        m_mediaPlayer->setRepeatMode(static_cast<MediaPlayer::RepeatMode>(repeat));
+
+        qDebug() << "Saved settings applied (vol=" << volume
+                 << "muted=" << muted
+                 << "shuffle=" << shuffle << "repeat=" << repeat << ")";
     }
 
-    /**
-     * @brief Connect cross-component signals
-     */
-    void connectComponentSignals() {
-        // TODO: Implement cross-component signal connections
-    }
-
-    /**
-     * @brief Initialize default playlist
-     */
-    void initializeDefaultPlaylist() {
-        // TODO: Implement default playlist initialization
-    }
-
-    /**
-     * @brief Start background services
-     */
-    void startBackgroundServices() {
-        // TODO: Implement background services
-    }
-
-    /**
-     * @brief Stop background services
-     */
-    void stopBackgroundServices() {
-        // TODO: Implement background service stopping
-    }
-
-    /**
-     * @brief Save playlist state
-     */
-    void savePlaylistState() {
-        // TODO: Implement playlist state saving
-    }
-
-    /**
-     * @brief Save settings
-     */
     void saveSettings() {
-        // TODO: Implement settings saving
+        if (!m_mediaPlayer) return;
+
+        m_settings->setValue("Playback/Volume",  m_mediaPlayer->volume());
+        m_settings->setValue("Playback/Muted",   m_mediaPlayer->isMuted());
+        m_settings->setValue("Playback/Shuffle", m_mediaPlayer->shuffle());
+        m_settings->setValue("Playback/Repeat",  static_cast<int>(m_mediaPlayer->repeatMode()));
+        m_settings->sync();
+
+        qDebug() << "Settings saved";
     }
 
-    // ================ Member Variables ================
+    // ------------------------------------------------------------------ signals
+    void connectComponentSignals() {
+        if (!m_mediaPlayer || !m_platform) return;
 
+        // Keep platform / MPRIS metadata in sync with playback
+        connect(m_mediaPlayer.get(), &MediaPlayer::positionChanged,
+                m_platform.get(), &Platform::setPosition);
+        connect(m_mediaPlayer.get(), &MediaPlayer::durationChanged,
+                m_platform.get(), &Platform::setDuration);
+        connect(m_mediaPlayer.get(), &MediaPlayer::stateChanged,
+                m_platform.get(), &Platform::setPlaybackState);
+
+        // Library notifications → info signal
+        connect(m_library.get(), &Library::error,
+                this, [this](const QString& msg) {
+                    emit warning(tr("Library: %1").arg(msg));
+                });
+
+        qDebug() << "Cross-component signals connected";
+    }
+
+    // ------------------------------------------------------------------ playlist
+    void initializeDefaultPlaylist() {
+        if (!m_mediaPlayer) return;
+
+        // Restore last playlist from settings
+        QStringList savedUrls =
+            m_settings->value("Playlist/LastSession").toStringList();
+
+        if (!savedUrls.isEmpty()) {
+            for (const QString& u : savedUrls) {
+                QUrl url(u);
+                if (url.isValid()) m_mediaPlayer->enqueue(url);
+            }
+            qDebug() << "Restored" << savedUrls.size() << "tracks from last session";
+        } else {
+            qDebug() << "No previous playlist to restore";
+        }
+    }
+
+    void savePlaylistState() {
+        if (!m_mediaPlayer) return;
+
+        QStringList urls;
+        for (const auto& item : m_mediaPlayer->playlist()) {
+            urls << item.url.toString();
+        }
+        m_settings->setValue("Playlist/LastSession", urls);
+        m_settings->setValue("Playlist/CurrentIndex", m_mediaPlayer->currentIndex());
+        m_settings->sync();
+
+        qDebug() << "Playlist state saved (" << urls.size() << "tracks)";
+    }
+
+    // ------------------------------------------------------------------ background services
+    void startBackgroundServices() {
+        // Auto-save timer: flush settings every 5 minutes
+        m_autoSaveTimer = new QTimer(this);
+        m_autoSaveTimer->setInterval(5 * 60 * 1000);
+        m_autoSaveTimer->setSingleShot(false);
+        connect(m_autoSaveTimer, &QTimer::timeout, this, [this]() {
+            saveSettings();
+            savePlaylistState();
+        });
+        m_autoSaveTimer->start();
+
+        // Trigger background library refresh scan if needed
+        if (m_library) {
+            QString watchPath =
+                m_settings->value("Library/WatchPath",
+                                  QStandardPaths::writableLocation(
+                                      QStandardPaths::MusicLocation))
+                    .toString();
+            if (!watchPath.isEmpty() && QDir(watchPath).exists()) {
+                QTimer::singleShot(3000, this, [this, watchPath]() {
+                    m_library->scanDirectory(watchPath);
+                });
+            }
+        }
+
+        qDebug() << "Background services started";
+    }
+
+    void stopBackgroundServices() {
+        if (m_autoSaveTimer) {
+            m_autoSaveTimer->stop();
+            m_autoSaveTimer->deleteLater();
+            m_autoSaveTimer = nullptr;
+        }
+        qDebug() << "Background services stopped";
+    }
+
+    // ------------------------------------------------------------------ members
     AppContext m_context;
     QSettings* m_settings;
+    QTimer*    m_autoSaveTimer = nullptr;
 
-    // Core components
-    std::shared_ptr<Library> m_library;
-    std::unique_ptr<MediaPlayer> m_mediaPlayer;
-    std::unique_ptr<Platform> m_platform;
+    // Core
+    std::shared_ptr<Library>       m_library;
+    std::unique_ptr<MediaPlayer>   m_mediaPlayer;
+    std::unique_ptr<Platform>      m_platform;
 
-    // Optional components
-    std::unique_ptr<Streaming> m_streaming;
-    std::unique_ptr<KDEConnect> m_kdeConnect;
-    std::unique_ptr<Capture> m_capture;
-    std::unique_ptr<Disc> m_disc;
+    // Optional
+    std::unique_ptr<Streaming>   m_streaming;
+    std::unique_ptr<KDEConnect>  m_kdeConnect;
+    std::unique_ptr<Capture>     m_capture;
+    std::unique_ptr<Disc>        m_disc;
     std::unique_ptr<AudioEditor> m_editor;
 };
 
