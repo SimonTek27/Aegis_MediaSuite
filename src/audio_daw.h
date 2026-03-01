@@ -1,5 +1,4 @@
 // audio_daw.h - Digital Audio Workstation Engine with Integrated Notation
-// Part of Aegis Multimedia Suite - Pillar 1 (Audio)
 
 #pragma once
 
@@ -20,9 +19,11 @@
 #include <cmath>
 #include <functional>
 #include <algorithm>
+#include <vector>
 
 // Forward declarations
 class QFileInfo;
+class AudioEngine;
 
 namespace Aegis {
 
@@ -308,28 +309,36 @@ namespace Aegis {
     };
 
     // =============================================================================
+    // Forward declarations for PIMPL classes
+    // =============================================================================
+
+    class Measure;
+    class Staff;
+    class Score;
+
+    // =============================================================================
     // Measure
     // =============================================================================
 
     class Measure : public QObject {
         Q_OBJECT
+
+        // Forward declaration of private implementation
+        class Private;
+        std::unique_ptr<Private> d;
+
     public:
         explicit Measure(int number, QObject* parent = nullptr);
+        ~Measure() override;
 
-        int measureNumber() const { return m_number; }
-        int startTick() const { return m_startTick; }
-        int lengthTicks() const { return m_lengthTicks; }
-        void setStartTick(int tick) { m_startTick = tick; }
-        void setLengthTicks(int ticks) { m_lengthTicks = ticks; }
+        int measureNumber() const;
+        int startTick() const;
+        int lengthTicks() const;
+        void setStartTick(int tick);
+        void setLengthTicks(int ticks);
 
-        QVector<Note> notes;
-        QVector<Clef> clefs;
-        QVector<KeySig> keySigs;
-        QVector<TimeSignature> timeSigs;
-        QVector<Barline> barlines;
-
-        double width = 100.0;
-        double xPosition = 0.0;
+        const QVector<Note>& notes() const;
+        QVector<Note>& notes();
 
         void addNote(const Note& note, int voice = 0);
         void removeNote(int index);
@@ -345,15 +354,16 @@ namespace Aegis {
         double tempoAt(int tick) const;
         double absoluteTimeAt(int tick) const;
 
+        double width = 100.0;
+        double xPosition = 0.0;
+
     signals:
         void noteAdded(const Note& note);
         void noteRemoved(int index);
         void modified();
 
     private:
-        int m_number = 0;
-        int m_startTick = 0;
-        int m_lengthTicks = 1920;
+        void rebuildNoteCache() const;
     };
 
     // =============================================================================
@@ -362,28 +372,37 @@ namespace Aegis {
 
     class Staff : public QObject {
         Q_OBJECT
+
+        // Forward declaration of private implementation
+        class Private;
+        std::unique_ptr<Private> d;
+
     public:
         explicit Staff(const QString& name, QObject* parent = nullptr);
+        ~Staff() override;
 
-        QString name() const { return m_name; }
-        void setName(const QString& name) { m_name = name; }
+        QString name() const;
+        void setName(const QString& name);
 
-        int lines() const { return m_lines; }
-        void setLines(int lines) { m_lines = lines; }
+        int lines() const;
+        void setLines(int lines);
 
-        Clef defaultClef() const { return m_defaultClef; }
-        void setDefaultClef(const Clef& clef) { m_defaultClef = clef; }
+        Clef defaultClef() const;
+        void setDefaultClef(const Clef& clef);
 
-        int midiChannel() const { return m_midiChannel; }
-        int midiProgram() const { return m_midiProgram; }
-        void setMidiChannel(int ch) { m_midiChannel = ch; }
-        void setMidiProgram(int prog) { m_midiProgram = prog; }
+        int midiChannel() const;
+        int midiProgram() const;
+        void setMidiChannel(int ch);
+        void setMidiProgram(int prog);
 
-        int transposeChromatic() const { return m_transposeChromatic; }
-        int transposeDiatonic() const { return m_transposeDiatonic; }
+        int transposeChromatic() const;
+        int transposeDiatonic() const;
         void setTranspose(int chromatic, int diatonic);
 
-        QVector<std::unique_ptr<Measure>> measures;
+        // Usa std::vector per unique_ptr
+        const std::vector<std::unique_ptr<Measure>>& measures() const { return d->measures; }
+        std::vector<std::unique_ptr<Measure>>& measures() { return d->measures; }
+
         Measure* addMeasure(int number);
         void removeMeasure(int index);
         Measure* measureAtTick(int tick);
@@ -399,13 +418,7 @@ namespace Aegis {
         void measureRemoved(int index);
 
     private:
-        QString m_name;
-        int m_lines = 5;
-        Clef m_defaultClef;
-        int m_midiChannel = 0;
-        int m_midiProgram = 0;
-        int m_transposeChromatic = 0;
-        int m_transposeDiatonic = 0;
+        void rebuildCache() const;
     };
 
     // =============================================================================
@@ -414,37 +427,46 @@ namespace Aegis {
 
     class Score : public QObject {
         Q_OBJECT
+
+        // Forward declaration of private implementation
+        class Private;
+        std::unique_ptr<Private> d;
+
     public:
         explicit Score(QObject* parent = nullptr);
+        ~Score() override;
 
-        QString title() const { return m_title; }
-        QString composer() const { return m_composer; }
-        QString lyricist() const { return m_lyricist; }
-        QString copyright() const { return m_copyright; }
+        QString title() const;
+        QString composer() const;
+        QString lyricist() const;
+        QString copyright() const;
 
-        void setTitle(const QString& title) { m_title = title; emit metadataChanged(); }
-        void setComposer(const QString& comp) { m_composer = comp; emit metadataChanged(); }
-        void setLyricist(const QString& lyr) { m_lyricist = lyr; emit metadataChanged(); }
-        void setCopyright(const QString& copy) { m_copyright = copy; emit metadataChanged(); }
+        void setTitle(const QString& title);
+        void setComposer(const QString& comp);
+        void setLyricist(const QString& lyr);
+        void setCopyright(const QString& copy);
 
-        QVector<std::unique_ptr<Staff>> staves;
+        // Usa std::vector per unique_ptr
+        const std::vector<std::unique_ptr<Staff>>& staves() const { return d->staves; }
+        std::vector<std::unique_ptr<Staff>>& staves() { return d->staves; }
+
         Staff* addStaff(const QString& name);
         void removeStaff(int index);
         Staff* staffAtY(double y) const;
 
-        TimeSignature defaultTimeSignature() const { return m_defaultTimeSig; }
-        void setDefaultTimeSignature(const TimeSignature& ts) { m_defaultTimeSig = ts; }
+        TimeSignature defaultTimeSignature() const;
+        void setDefaultTimeSignature(const TimeSignature& ts);
 
-        int ticksPerQuarter() const { return m_ticksPerQuarter; }
-        void setTicksPerQuarter(int ticks) { m_ticksPerQuarter = ticks; }
+        int ticksPerQuarter() const;
+        void setTicksPerQuarter(int ticks);
 
-        double tempo() const { return m_tempo; }
-        void setTempo(double t) { m_tempo = t; }
+        double tempo() const;
+        void setTempo(double t);
 
-        double pageWidth() const { return m_pageWidth; }
-        double pageHeight() const { return m_pageHeight; }
-        double staffDistance() const { return m_staffDistance; }
-        void setPageSize(double w, double h) { m_pageWidth = w; m_pageHeight = h; }
+        double pageWidth() const;
+        double pageHeight() const;
+        double staffDistance() const;
+        void setPageSize(double w, double h);
 
         int totalTicks() const;
         Measure* measureAtTick(int tick);
@@ -463,18 +485,10 @@ namespace Aegis {
         void modified();
         void metadataChanged();
         void structureChanged();
+        void error(const QString& message);
 
     private:
-        QString m_title;
-        QString m_composer;
-        QString m_lyricist;
-        QString m_copyright;
-        TimeSignature m_defaultTimeSig;
-        int m_ticksPerQuarter = 480;
-        double m_tempo = 120.0;
-        double m_pageWidth = 1224;
-        double m_pageHeight = 1584;
-        double m_staffDistance = 80.0;
+        void rebuildCache() const;
 
         // MusicXML parsing helpers
         Note parseMusicXMLNote(QXmlStreamReader& xml);
@@ -532,7 +546,7 @@ namespace Aegis {
 
     class ScoreRenderer {
     public:
-        explicit ScoreRenderer(Score* score);
+        explicit ScoreRenderer(Score* score = nullptr);
 
         void render(QPainter* painter, const QRectF& rect, int startStaff = 0, int staffCount = -1);
         void renderMeasure(QPainter* painter, Measure* measure, const QPointF& pos);
@@ -551,6 +565,9 @@ namespace Aegis {
         void layoutMeasure(Measure* measure);
         double measureWidth(Measure* measure) const;
 
+        // Public so ScoreView can use it for selection drawing
+        double calculateNoteY(const Note& note) const;
+
     private:
         Score* m_score;
         EngravingSettings m_settings;
@@ -563,20 +580,8 @@ namespace Aegis {
         void drawAccidental(QPainter* painter, Accidental acc, const QPointF& pos);
         void drawArticulation(QPainter* painter, Articulation art, const QPointF& notePos, bool above);
         void drawLyric(QPainter* painter, const Lyric& lyric, const QPointF& pos);
-        double calculateNoteY(const Note& note) const;
         double keySigWidth(const KeySig& key) const;
         int midiToStaffLine(int midiNote) const;
-    };
-
-    // =============================================================================
-    // Effect Chain (Pillar 2) - Forward Declaration
-    // =============================================================================
-
-    class EffectChain {
-    public:
-        virtual ~EffectChain() = default;
-        virtual void process(float* buffer, int frames) = 0;
-        virtual void addEffect(std::shared_ptr<class AudioEffect> effect) = 0;
     };
 
     // =============================================================================
@@ -612,11 +617,11 @@ namespace Aegis {
         virtual void cleanupPlayback() {}
         virtual void processAudio(double position, int frames, float* buffer,
                                   int channels, int sampleRate, const TempoMap& tempo) = 0;
-        virtual QVector<NoteEvent> getMidiEvents(double start, double end) = 0;
+                                  virtual QVector<NoteEvent> getMidiEvents(double start, double end) = 0;
 
-        virtual bool isEmpty() const { return false; }
+                                  virtual bool isEmpty() const { return false; }
 
-        void snapToGrid(const TempoMap& tempoMap, int subdivisions = 16);
+                                  void snapToGrid(const TempoMap& tempoMap, int subdivisions = 16);
 
     signals:
         void nameChanged();
@@ -755,10 +760,13 @@ namespace Aegis {
         bool isSoloed() const { return m_soloed; }
         void setSoloed(bool s) { m_soloed = s; emit stateChanged(); }
 
+        // Usa std::vector per unique_ptr
+        const std::vector<std::unique_ptr<Clip>>& clips() const { return m_clips; }
+
         void addClip(std::unique_ptr<Clip> clip);
         void removeClip(Clip* clip);
         Clip* clipAt(int index) const;
-        int clipCount() const { return m_clips.size(); }
+        int clipCount() const { return static_cast<int>(m_clips.size()); }
         QVector<Clip*> clipsAt(double time) const;
         QVector<NotationClip*> notationClips() const;
 
@@ -783,7 +791,7 @@ namespace Aegis {
         double m_pan = 0.0;
         bool m_muted = false;
         bool m_soloed = false;
-        QVector<std::unique_ptr<Clip>> m_clips;
+        std::vector<std::unique_ptr<Clip>> m_clips;
         mutable QReadWriteLock m_lock;
     };
 
@@ -852,7 +860,7 @@ namespace Aegis {
         Track* addTrack(const QString& name = QString());
         void removeTrack(int index);
         Track* trackAt(int index) const;
-        int trackCount() const { return m_tracks.size(); }
+        int trackCount() const { return static_cast<int>(m_tracks.size()); }
 
         NotationClip* createNotationClip(int trackIndex = -1, const QString& name = "Notation");
         NotationClip* importScore(const QString& path, int trackIndex = -1);
@@ -876,7 +884,7 @@ namespace Aegis {
 
     private:
         Transport m_transport;
-        QVector<std::unique_ptr<Track>> m_tracks;
+        std::vector<std::unique_ptr<Track>> m_tracks;
         QVector<float> m_mixBuffer;
     };
 

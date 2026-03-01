@@ -1,6 +1,6 @@
 // notation_editor.h - Interactive Music Notation Editor
-// MuseScore-like editing interface with real-time playback
-// Compatible with Aegis DAW Engine
+// MuseScore-like editing interface with real-time playback.
+// Compatible with Aegis DAW Engine.
 
 #pragma once
 
@@ -8,6 +8,7 @@
 #include <QWidget>
 #include <QScrollArea>
 #include <QTimer>
+#include <QTime>           // Required for QTime m_playbackStartTime
 #include <QUndoStack>
 #include <QTransform>
 #include <QMap>
@@ -22,29 +23,31 @@ namespace Aegis {
     class AudioOutput;
 
     // =============================================================================
-    // Type Aliases for Compatibility
+    // Type Alias
+    // NOTE: Duration does NOT contain a nested Type enum.
+    //       Use DurationType directly (defined in audio_daw.h).
     // =============================================================================
 
-    using NoteDuration = Duration::Type;
+    using NoteDuration = DurationType;
 
     // =============================================================================
-    // NotationEditTool
+    // EditTool
     // =============================================================================
 
     enum class EditTool {
-        Select,         // Selection mode
-        NoteInput,      // Note entry mode
-        RestInput,      // Rest entry mode
-        Slur,           // Draw slurs
-        Crescendo,      // Hairpins
+        Select,
+        NoteInput,
+        RestInput,
+        Slur,
+        Crescendo,
         Decrescendo,
-        Text,           // Add text
-        Lyrics,         // Add lyrics
-        Tempo,          // Tempo markings
-        Dynamic,        // Dynamics (p, mf, ff, etc.)
-        Clef,           // Change clef
-        KeySignature,   // Change key
-        TimeSignature   // Change time signature
+        Text,
+        Lyrics,
+        Tempo,
+        Dynamic,
+        Clef,
+        KeySignature,
+        TimeSignature
     };
 
     // =============================================================================
@@ -52,30 +55,25 @@ namespace Aegis {
     // =============================================================================
 
     struct NoteInputState {
-        Duration duration{Duration::Type::Quarter, 0};
-        int voice = 0;
-        bool tieMode = false;
-        bool slurMode = false;
-        bool dotted = false;
-        bool doubleDotted = false;
-        Accidental accidental = Accidental::None;
-        Articulation articulation = Articulation::None;
-        int octave = 4;
-        bool insertMode = false;  // Insert vs overwrite
+        // duration.type uses DurationType; dots stored in duration.dots.
+        Duration     duration{DurationType::Quarter, 0};
+        int          voice         = 0;
+        bool         tieMode       = false;
+        bool         slurMode      = false;
+        bool         dotted        = false;
+        bool         doubleDotted  = false;
+        Accidental   accidental    = Accidental::None;
+        Articulation articulation  = Articulation::None;
+        int          octave        = 4;
+        bool         insertMode    = false;
 
         void toggleDot() {
             if (!dotted) {
-                dotted = true;
-                doubleDotted = false;
-                duration.dots = 1;
+                dotted = true;  doubleDotted = false; duration.dots = 1;
             } else if (!doubleDotted) {
-                dotted = false;
-                doubleDotted = true;
-                duration.dots = 2;
+                dotted = false; doubleDotted = true;  duration.dots = 2;
             } else {
-                dotted = false;
-                doubleDotted = false;
-                duration.dots = 0;
+                dotted = false; doubleDotted = false; duration.dots = 0;
             }
         }
     };
@@ -94,11 +92,11 @@ namespace Aegis {
         Score* score() const { return m_score; }
 
         // View control
-        void zoomIn();
-        void zoomOut();
-        void zoomToFit();
-        void zoomToWidth();
-        void setZoom(double zoom);
+        void   zoomIn();
+        void   zoomOut();
+        void   zoomToFit();
+        void   zoomToWidth();
+        void   setZoom(double zoom);
         double zoom() const { return m_zoom; }
 
         // Navigation
@@ -108,12 +106,14 @@ namespace Aegis {
         void pageDown();
 
         // Edit state
-        void setEditTool(EditTool tool);
-        EditTool editTool() const { return m_currentTool; }
+        void     setEditTool(EditTool tool);
+        EditTool editTool()  const { return m_currentTool; }
 
-        NoteInputState& inputState() { return m_inputState; }
+        NoteInputState&       inputState()       { return m_inputState; }
         const NoteInputState& inputState() const { return m_inputState; }
-        void setInputDuration(Duration::Type dur);
+
+        // Use DurationType (the canonical enum) for duration setting.
+        void setInputDuration(DurationType dur);
 
         // Selection
         void selectAll();
@@ -139,7 +139,7 @@ namespace Aegis {
 
         // Pillar integration
         void setAudioEngine(AudioEngine* engine) { m_audioEngine = engine; }
-        void setAudioOutput(AudioOutput* output) { m_audioOutput = output; }
+        void setAudioOutput(AudioOutput* output)  { m_audioOutput = output; }
 
     signals:
         void selectionChanged();
@@ -150,72 +150,72 @@ namespace Aegis {
         void toolChanged(EditTool tool);
 
     protected:
-        void paintEvent(QPaintEvent* event) override;
-        void mousePressEvent(QMouseEvent* event) override;
-        void mouseMoveEvent(QMouseEvent* event) override;
-        void mouseReleaseEvent(QMouseEvent* event) override;
-        void mouseDoubleClickEvent(QMouseEvent* event) override;
-        void wheelEvent(QWheelEvent* event) override;
-        void keyPressEvent(QKeyEvent* event) override;
-        void resizeEvent(QResizeEvent* event) override;
+        void paintEvent(QPaintEvent* event)                override;
+        void mousePressEvent(QMouseEvent* event)           override;
+        void mouseMoveEvent(QMouseEvent* event)            override;
+        void mouseReleaseEvent(QMouseEvent* event)         override;
+        void mouseDoubleClickEvent(QMouseEvent* event)     override;
+        void wheelEvent(QWheelEvent* event)                override;
+        void keyPressEvent(QKeyEvent* event)               override;
+        void resizeEvent(QResizeEvent* event)              override;
 
     private:
         void updateTransform();
         QPointF screenToScore(const QPoint& pos) const;
-        QPoint scoreToScreen(const QPointF& pos) const;
+        QPoint  scoreToScreen(const QPointF& pos) const;
 
         void drawSelection(QPainter* painter);
         void drawPlaybackCursor(QPainter* painter);
         void drawNoteInputCursor(QPainter* painter);
 
-        Note* noteAt(const QPointF& pos);
+        Note*    noteAt(const QPointF& pos);
         Measure* measureAt(const QPointF& pos);
-        Staff* staffAt(const QPointF& pos);
-        int tickAt(const QPointF& pos, Measure** outMeasure = nullptr);
+        Staff*   staffAt(const QPointF& pos);
+        int      tickAt(const QPointF& pos, Measure** outMeasure = nullptr);
 
         void beginNoteInput();
         void endNoteInput();
         void updateInputPitch(int staffLine);
 
-        Score* m_score = nullptr;
-        ScoreRenderer m_renderer;
-        AudioEngine* m_audioEngine = nullptr;
-        AudioOutput* m_audioOutput = nullptr;
+        Score*         m_score       = nullptr;
+        ScoreRenderer  m_renderer;
+        AudioEngine*   m_audioEngine = nullptr;
+        AudioOutput*   m_audioOutput = nullptr;
 
         // View state
-        double m_zoom = 1.0;
-        double m_offsetX = 0.0;
-        double m_offsetY = 0.0;
+        double     m_zoom    = 1.0;
+        double     m_offsetX = 0.0;
+        double     m_offsetY = 0.0;
         QTransform m_transform;
 
         // Interaction
-        EditTool m_currentTool = EditTool::Select;
+        EditTool       m_currentTool = EditTool::Select;
         NoteInputState m_inputState;
-        bool m_dragging = false;
-        QPoint m_dragStart;
-        QPointF m_selectionStart;
-        QRectF m_selectionRect;
+        bool           m_dragging    = false;
+        QPoint         m_dragStart;
+        QPointF        m_selectionStart;
+        QRectF         m_selectionRect;
 
         // Current position
-        Measure* m_currentMeasure = nullptr;
-        Staff* m_currentStaff = nullptr;
-        int m_currentTick = 0;
-        int m_currentStaffLine = 0;  // For note input
+        Measure* m_currentMeasure    = nullptr;
+        Staff*   m_currentStaff      = nullptr;
+        int      m_currentTick       = 0;
+        int      m_currentStaffLine  = 0;
 
         // Selection
-        QVector<Note*> m_selectedNotes;
+        QVector<Note*>    m_selectedNotes;
         QVector<Measure*> m_selectedMeasures;
 
         // Playback
-        int m_playbackTick = -1;
+        int    m_playbackTick = -1;
         QTimer m_playbackTimer;
 
-        // Layout
+        // Layout cache
         QVector<QRectF> m_measureRects;
     };
 
     // =============================================================================
-    // NotationEditor - Main editor window/container
+    // NotationEditor - Main editor widget
     // =============================================================================
 
     class NotationEditor : public QWidget {
@@ -231,10 +231,10 @@ namespace Aegis {
         bool exportScore(const QString& path, const QString& format);
 
         // Score access
-        Score* currentScore() const { return m_score.get(); }
-        ScoreView* view() const { return m_view; }
+        Score*      currentScore() const { return m_score.get(); }
+        ScoreView*  view()         const { return m_view; }
 
-        // Playback control - integrates with AudioEngine (Pillar 1)
+        // Playback
         void play();
         void pause();
         void stop();
@@ -242,10 +242,9 @@ namespace Aegis {
         void seek(int tick);
         void setLoop(int startTick, int endTick);
         void clearLoop();
-
         bool isPlaying() const { return m_playing; }
 
-        // Undo/redo
+        // Undo / redo
         void undo();
         void redo();
         bool canUndo() const;
@@ -263,19 +262,21 @@ namespace Aegis {
 
         // Tools
         void setTool(EditTool tool);
-        void setNoteDuration(Duration::Type dur);
+        void setNoteDuration(DurationType dur);
         void toggleDot();
         void toggleTie();
         void toggleSlur();
         void setAccidental(Accidental acc);
         void setArticulation(Articulation art);
-        void addDynamic(int dynValue);  // 0-127 MIDI velocity equivalent
+        void addDynamic(int dynValue);
 
     signals:
         void scoreModified(bool modified);
         void playbackStateChanged(bool playing);
         void selectionChanged();
         void statusMessage(const QString& message);
+        // Emitted just before the playback position wraps back to loop start.
+        void aboutToLoop();
 
     private slots:
         void onViewSelectionChanged();
@@ -287,41 +288,38 @@ namespace Aegis {
         void createActions();
         void createToolbars();
         void connectSignals();
-
         void updateWindowTitle();
         void setModified(bool modified);
-
-        // Audio generation for playback
         void preparePlayback();
         void stopPlayback();
 
         std::unique_ptr<Score> m_score;
-        QString m_filePath;
-        bool m_modified = false;
+        QString                m_filePath;
+        bool                   m_modified = false;
 
-        ScoreView* m_view;
+        ScoreView*   m_view;
         QScrollArea* m_scrollArea;
-        QUndoStack* m_undoStack;
+        QUndoStack*  m_undoStack;
 
         // Pillar dependencies
         AudioEngine* m_audioEngine = nullptr;
         AudioOutput* m_audioOutput = nullptr;
 
-        // Playback
-        bool m_playing = false;
-        int m_playbackStartTick = 0;
-        int m_loopStartTick = -1;
-        int m_loopEndTick = -1;
-        QTime m_playbackStartTime;
+        // Playback state
+        bool   m_playing          = false;
+        int    m_playbackStartTick = 0;
+        int    m_loopStartTick    = -1;
+        int    m_loopEndTick      = -1;
+        QTime  m_playbackStartTime;   // QTime is fully declared via <QTime>
         QTimer m_playbackTimer;
 
-        // Audio rendering
+        // Audio rendering buffer
         QByteArray m_audioBuffer;
-        int m_audioBufferPos = 0;
+        int        m_audioBufferPos = 0;
     };
 
     // =============================================================================
-    // NoteInputController - Handles MIDI/keyboard note entry
+    // NoteInputController - MIDI / keyboard note entry
     // =============================================================================
 
     class NoteInputController : public QObject {
@@ -329,15 +327,11 @@ namespace Aegis {
     public:
         explicit NoteInputController(NotationEditor* editor, QObject* parent = nullptr);
 
-        // MIDI input
-        void setMidiInputEnabled(bool enabled) { m_midiEnabled = enabled; }
-        bool isMidiInputEnabled() const { return m_midiEnabled; }
-
-        // Keyboard mapping
+        void setMidiInputEnabled(bool enabled)      { m_midiEnabled    = enabled; }
+        bool isMidiInputEnabled() const             { return m_midiEnabled; }
         void setComputerKeyboardInput(bool enabled) { m_keyboardEnabled = enabled; }
-        bool handleKeyPress(int key, Qt::KeyboardModifiers modifiers);
 
-        // MIDI mapping
+        bool handleKeyPress(int key, Qt::KeyboardModifiers modifiers);
         void onMidiNoteOn(int channel, int pitch, int velocity);
         void onMidiNoteOff(int channel, int pitch);
 
@@ -346,17 +340,15 @@ namespace Aegis {
         void chordEntered(const QVector<Pitch>& pitches);
 
     private:
-        NotationEditor* m_editor;
-        bool m_midiEnabled = false;
-        bool m_keyboardEnabled = true;
-
-        // Computer keyboard to pitch mapping (like MuseScore's A-G mapping)
+        NotationEditor*       m_editor;
+        bool                  m_midiEnabled     = false;
+        bool                  m_keyboardEnabled = true;
         QMap<int, PitchClass> m_keyMap;
-        QVector<int> m_activeMidiNotes;  // For chord input
+        QVector<int>          m_activeMidiNotes;
     };
 
     // =============================================================================
-    // PaletteWidget - Tool palette for notation elements
+    // PaletteWidget - Notation element tool palette
     // =============================================================================
 
     class PaletteWidget : public QWidget {

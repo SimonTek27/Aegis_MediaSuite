@@ -321,6 +321,7 @@ namespace Aegis {
         Q_INVOKABLE void startAll();
         Q_INVOKABLE void stopAll();
         bool active() const;
+        int endpointCount() const { return m_endpoints.size(); }
 
         // Access
         AudioEngine* engine() const { return m_engine; }

@@ -151,26 +151,26 @@ namespace Aegis {
         m_endpoints[name] = std::move(endpoint);
         emit endpointsChanged();
         return true;
-                                         }
+    }
 
-                                         void AudioMiddleware::destroyEndpoint(const QString& name) {
-                                             auto it = m_endpoints.find(name);
-                                             if (it == m_endpoints.end()) return;
+    void AudioMiddleware::destroyEndpoint(const QString& name) {
+        auto it = m_endpoints.find(name);
+        if (it == m_endpoints.end()) return;
 
-                                             it->second->shutdown();
-                                             m_endpoints.erase(it);
-                                             m_routingTable.remove(name);
+        it.value()->shutdown();
+        m_endpoints.erase(it);
+        m_routingTable.remove(name);
 
-                                             // Remove from other routes
-                                             for (auto it = m_routingTable.begin(); it != m_routingTable.end(); ++it) {
-                                                 auto &destinations = it.value();
-                                                 destinations.removeAll(name);
-                                             }
+        // Remove from other routes
+        for (auto itRoute = m_routingTable.begin(); itRoute != m_routingTable.end(); ++itRoute) {
+            auto &destinations = itRoute.value();
+            destinations.removeAll(name);
+        }
 
-                                             emit endpointsChanged();
-                                         }
+        emit endpointsChanged();
+    }
 
-                                         bool AudioMiddleware::connectEndpoints(const QString& source, const QString& destination) {
+    bool AudioMiddleware::connectEndpoints(const QString& source, const QString& destination) {
                                              if (!m_endpoints.contains(source) || !m_endpoints.contains(destination)) {
                                                  return false;
                                              }

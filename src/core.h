@@ -326,6 +326,11 @@ namespace Aegis {
         void error(const QString &message);
 
         /**
+         * @brief Emitted when playlist playback finishes
+         */
+        void playlistFinished();
+
+        /**
          * @brief Emitted when end of stream is reached
          *
          * Signals that playback has naturally completed.
@@ -399,9 +404,10 @@ namespace Aegis {
         std::atomic<double> m_volume{100.0};        ///< Current volume level (0-100)
 
         // Engine components (managed with unique_ptr for automatic cleanup)
-        std::unique_ptr<AudioEngine> m_audio;       ///< Audio decoding and output
-        std::unique_ptr<VideoEngine> m_video;       ///< Video decoding and rendering
-        std::shared_ptr<Library> m_library;         ///< Media metadata database
+        std::unique_ptr<AudioEngine>   m_audio;     ///< Audio analysis/effects engine
+        std::unique_ptr<AudioBackend>  m_backend;   ///< Transport/decoding backend (e.g., MpvBackend)
+        std::unique_ptr<VideoEngine>   m_video;     ///< Video decoding and rendering
+        std::shared_ptr<Library>       m_library;   ///< Media metadata database
 
         // UI update timer for smooth position display
         QTimer m_positionTimer;                     ///< 60Hz timer for UI updates

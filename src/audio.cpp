@@ -1,4 +1,5 @@
-// audio.cpp
+// audio.cpp - Audio Engine Core Implementation
+
 #include "audio.h"
 #include "audio_output.h"
 #include <cmath>
@@ -10,7 +11,401 @@
 #include <QDateTime>
 #include <libopenmpt/libopenmpt.hpp>
 
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
+
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 namespace Aegis {
+
+    // ============================================================================
+    // Lock-Free Ring Buffer for Echo Effect
+    // ============================================================================
+
+    template<typename T, size_t Size>
+    class LockFreeRingBuffer {
+        static_assert((Size & (Size - 1)) == 0, "Size must be power of two");
+
+    private:
+        std::array<T, Size> m_buffer;
+        std::atomic<size_t> m_writeIndex{0};
+        std::atomic<size_t> m_readIndex{0};
+        static constexpr size_t MASK = Size - 1;
+
+        // Padding to prevent false sharing
+        char padding[64];
+
+    public:
+        LockFreeRingBuffer() {
+            m_buffer.fill(T(0));
+        }
+
+        bool push(const T& value) {
+            size_t write = m_writeIndex.load(std::memory_order_relaxed);
+            size_t next = (write + 1) & MASK;
+
+            if (next == m_readIndex.load(std::memory_order_acquire)) {
+                return false;  // Buffer full
+            }
+
+            m_buffer[write] = value;
+            m_writeIndex.store(next, std::memory_order_release);
+            return true;
+        }
+
+        bool pop(T& value) {
+            size_t read = m_readIndex.load(std::memory_order_relaxed);
+
+            if (read == m_writeIndex.load(std::memory_order_acquire)) {
+                return false;  // Buffer empty
+            }
+
+            value = m_buffer[read];
+            m_readIndex.store((read + 1) & MASK, std::memory_order_release);
+            return true;
+        }
+
+        T* front() {
+            size_t read = m_readIndex.load(std::memory_order_acquire);
+            return (read == m_writeIndex.load(std::memory_order_acquire))
+            ? nullptr : &m_buffer[read];
+        }
+
+        void advanceRead(size_t count = 1) {
+            m_readIndex.store((m_readIndex.load(std::memory_order_relaxed) + count) & MASK,
+                              std::memory_order_release);
+        }
+
+        size_t available() const {
+            size_t write = m_writeIndex.load(std::memory_order_acquire);
+            size_t read = m_readIndex.load(std::memory_order_acquire);
+            return (write - read) & MASK;
+        }
+
+        void reset() {
+            m_writeIndex.store(0, std::memory_order_release);
+            m_readIndex.store(0, std::memory_order_release);
+            std::fill(m_buffer.begin(), m_buffer.end(), T(0));
+        }
+    };
+
+    // ============================================================================
+    // KaraokeProcessor Private Implementation
+    // ============================================================================
+
+    class KaraokeProcessor::Private {
+    public:
+        // Processing parameters with proper memory ordering
+        std::atomic<int> keySemitones{0};
+        std::atomic<bool> vocalSuppression{true};
+        std::atomic<double> musicVolume{1.0};
+        std::atomic<double> vocalVolume{0.0};
+        std::atomic<double> echoLevel{0.0};
+        std::atomic<bool> enabled{false};
+        std::atomic<int> currentSampleRate{48000};
+
+        // Pitch shifting with RCU-like semantics
+        std::shared_mutex stretcherMutex;
+        std::shared_ptr<RubberBand::RubberBandStretcher> stretcher;
+
+        // Lock-free echo buffer
+        static constexpr size_t MaxEchoDelay = 48000;  // 1 second at 48kHz
+        using EchoBuffer = LockFreeRingBuffer<float, MaxEchoDelay * 2>;
+        EchoBuffer echoBuffer;
+
+        // SIMD-aligned temporary buffers
+        alignas(32) std::vector<float> tempInput;
+        alignas(32) std::vector<float> tempOutput;
+
+        Private() {
+            tempInput.reserve(4096);
+            tempOutput.reserve(4096);
+        }
+
+        ~Private() = default;
+
+        // Update pitch stretcher with copy-on-write semantics
+        void updateStretcher(int sampleRate) {
+            int semitones = keySemitones.load(std::memory_order_acquire);
+
+            if (semitones == 0) {
+                std::unique_lock lock(stretcherMutex);
+                stretcher.reset();
+                return;
+            }
+
+            // Create new stretcher if needed
+            if (!stretcher || currentSampleRate.load() != sampleRate) {
+                auto newStretcher = std::make_shared<RubberBand::RubberBandStretcher>(
+                    sampleRate, 2,
+                    RubberBand::RubberBandStretcher::OptionProcessRealTime |
+                    RubberBand::RubberBandStretcher::OptionEngineFaster
+                );
+
+                double ratio = std::pow(2.0, semitones / 12.0);
+                newStretcher->setPitchScale(ratio);
+
+                {
+                    std::unique_lock lock(stretcherMutex);
+                    stretcher.swap(newStretcher);
+                }
+
+                currentSampleRate.store(sampleRate, std::memory_order_release);
+            }
+        }
+
+        #ifdef __AVX2__
+        // AVX2-optimized vocal suppression
+        void applyVocalSuppressionAVX2(float* data, int frames) {
+            const int simdFrames = frames & ~3;  // Multiple of 4
+
+            for (int i = 0; i < simdFrames * 2; i += 8) {
+                __m256 leftRight = _mm256_loadu_ps(&data[i]);
+
+                // Deinterleave: [L0,R0,L1,R1,...] -> [L0,L1,L2,L3], [R0,R1,R2,R3]
+                __m256 lo = _mm256_unpacklo_ps(leftRight, _mm256_setzero_ps());
+                __m256 hi = _mm256_unpackhi_ps(leftRight, _mm256_setzero_ps());
+                __m256 left = _mm256_shuffle_ps(lo, hi, _MM_SHUFFLE(2,0,2,0));
+                __m256 right = _mm256_shuffle_ps(lo, hi, _MM_SHUFFLE(3,1,3,1));
+
+                // center = (left + right) * 0.5
+                // side = (left - right) * 0.5
+                __m256 center = _mm256_mul_ps(_mm256_add_ps(left, right),
+                                              _mm256_set1_ps(0.5f));
+                __m256 side = _mm256_mul_ps(_mm256_sub_ps(left, right),
+                                            _mm256_set1_ps(0.5f));
+
+                // output L = side * 2, output R = -side * 2
+                __m256 outL = _mm256_mul_ps(side, _mm256_set1_ps(2.0f));
+                __m256 outR = _mm256_mul_ps(side, _mm256_set1_ps(-2.0f));
+
+                // Interleave back
+                __m256 outLo = _mm256_unpacklo_ps(outL, outR);
+                __m256 outHi = _mm256_unpackhi_ps(outL, outR);
+                __m256 out = _mm256_shuffle_ps(outLo, outHi, _MM_SHUFFLE(1,0,1,0));
+
+                _mm256_storeu_ps(&data[i], out);
+            }
+
+            // Handle remaining frames
+            for (int i = simdFrames * 2; i < frames * 2; i += 2) {
+                float left = data[i];
+                float right = data[i + 1];
+                float center = (left + right) * 0.5f;
+                float side = (left - right) * 0.5f;
+
+                data[i] = side * 2.0f;
+                data[i + 1] = -side * 2.0f;
+            }
+        }
+        #elif defined(__SSE2__)
+        // SSE2-optimized vocal suppression
+        void applyVocalSuppressionSSE2(float* data, int frames) {
+            const int simdFrames = frames & ~1;  // Multiple of 2
+
+            for (int i = 0; i < simdFrames * 2; i += 4) {
+                __m128 leftRight = _mm_loadu_ps(&data[i]);
+
+                // Extract left and right channels
+                __m128 left = _mm_shuffle_ps(leftRight, leftRight, _MM_SHUFFLE(2,0,2,0));
+                __m128 right = _mm_shuffle_ps(leftRight, leftRight, _MM_SHUFFLE(3,1,3,1));
+
+                // center = (left + right) * 0.5
+                // side = (left - right) * 0.5
+                __m128 center = _mm_mul_ps(_mm_add_ps(left, right), _mm_set1_ps(0.5f));
+                __m128 side = _mm_mul_ps(_mm_sub_ps(left, right), _mm_set1_ps(0.5f));
+
+                // output L = side * 2, output R = -side * 2
+                __m128 outL = _mm_mul_ps(side, _mm_set1_ps(2.0f));
+                __m128 outR = _mm_mul_ps(side, _mm_set1_ps(-2.0f));
+
+                // Interleave
+                __m128 out = _mm_unpacklo_ps(outL, outR);
+
+                _mm_storeu_ps(&data[i], out);
+            }
+
+            // Handle remaining frames
+            for (int i = simdFrames * 2; i < frames * 2; i += 2) {
+                float left = data[i];
+                float right = data[i + 1];
+                float center = (left + right) * 0.5f;
+                float side = (left - right) * 0.5f;
+
+                data[i] = side * 2.0f;
+                data[i + 1] = -side * 2.0f;
+            }
+        }
+        #endif
+
+        // Lock-free echo processing
+        void applyEcho(float* data, int frames) {
+            float level = echoLevel.load(std::memory_order_acquire);
+            if (level < 0.001f) return;
+
+            for (int i = 0; i < frames * 2; i += 2) {
+                float left = data[i];
+                float right = data[i + 1];
+
+                // Try to read echo samples
+                float echoLeft = 0.0f;
+                float echoRight = 0.0f;
+                echoBuffer.pop(echoLeft);
+                echoBuffer.pop(echoRight);
+
+                // Write new echo samples
+                echoBuffer.push(left + echoLeft * 0.5f);
+                echoBuffer.push(right + echoRight * 0.5f);
+
+                // Mix with dry signal
+                data[i] = left * (1.0f - level) + echoLeft * level;
+                data[i + 1] = right * (1.0f - level) + echoRight * level;
+            }
+        }
+    };
+
+    KaraokeProcessor::KaraokeProcessor()
+    : d(std::make_unique<Private>()) {
+    }
+
+    KaraokeProcessor::~KaraokeProcessor() = default;
+
+    void KaraokeProcessor::setKeyChange(int semitones) {
+        d->keySemitones.store(std::clamp(semitones, -12, 12),
+                              std::memory_order_release);
+    }
+
+    void KaraokeProcessor::setVocalSuppressionEnabled(bool enabled) {
+        d->vocalSuppression.store(enabled, std::memory_order_release);
+    }
+
+    void KaraokeProcessor::setMusicVolume(double volume) {
+        d->musicVolume.store(std::clamp(volume, 0.0, 2.0),
+                             std::memory_order_release);
+    }
+
+    void KaraokeProcessor::setVocalVolume(double volume) {
+        d->vocalVolume.store(std::clamp(volume, 0.0, 2.0),
+                             std::memory_order_release);
+    }
+
+    void KaraokeProcessor::setEchoLevel(double level) {
+        d->echoLevel.store(std::clamp(level, 0.0, 1.0),
+                           std::memory_order_release);
+    }
+
+    void KaraokeProcessor::setEnabled(bool enabled) {
+        d->enabled.store(enabled, std::memory_order_release);
+        if (!enabled) {
+            d->echoBuffer.reset();
+        }
+    }
+
+    bool KaraokeProcessor::enabled() const {
+        return d->enabled.load(std::memory_order_acquire);
+    }
+
+    bool KaraokeProcessor::vocalSuppressionEnabled() const {
+        return d->vocalSuppression.load(std::memory_order_acquire);
+    }
+
+    void KaraokeProcessor::process(float* interleavedData, int frames, int sampleRate) {
+        if (!d->enabled.load(std::memory_order_acquire) || frames <= 0) {
+            return;
+        }
+
+        // Update pitch stretcher if needed
+        if (d->keySemitones.load(std::memory_order_acquire) != 0) {
+            d->updateStretcher(sampleRate);
+        }
+
+        // Apply effects in order
+        if (d->vocalSuppression.load(std::memory_order_acquire)) {
+            #ifdef __AVX2__
+            d->applyVocalSuppressionAVX2(interleavedData, frames);
+            #elif defined(__SSE2__)
+            d->applyVocalSuppressionSSE2(interleavedData, frames);
+            #else
+            // Scalar fallback
+            for (int i = 0; i < frames * 2; i += 2) {
+                float left = interleavedData[i];
+                float right = interleavedData[i + 1];
+                float center = (left + right) * 0.5f;
+                float side = (left - right) * 0.5f;
+
+                interleavedData[i] = side * 2.0f;
+                interleavedData[i + 1] = -side * 2.0f;
+            }
+            #endif
+        }
+
+        // Volume mixing (with SIMD optimization)
+        double musicVol = d->musicVolume.load(std::memory_order_acquire);
+        double vocalVol = d->vocalVolume.load(std::memory_order_acquire);
+
+        if (musicVol != 1.0 || vocalVol != 0.0) {
+            const int samples = frames * 2;
+
+            #ifdef __SSE2__
+            const int simdSamples = samples & ~3;
+
+            for (int i = 0; i < simdSamples; i += 4) {
+                __m128 v = _mm_loadu_ps(&interleavedData[i]);
+                __m128 music = _mm_set1_ps(static_cast<float>(musicVol));
+                __m128 vocal = _mm_set1_ps(static_cast<float>(vocalVol));
+
+                // Alternate between music and vocal gains
+                __m128 mask = _mm_set_ps(1.0f, 0.0f, 1.0f, 0.0f);
+                __m128 mixed = _mm_add_ps(
+                    _mm_mul_ps(v, _mm_blendv_ps(music, vocal, mask)),
+                                          _mm_mul_ps(v, _mm_blendv_ps(vocal, music, mask))
+                );
+
+                _mm_storeu_ps(&interleavedData[i], mixed);
+            }
+
+            for (int i = simdSamples; i < samples; i += 2)
+                #else
+                for (int i = 0; i < samples; i += 2)
+                    #endif
+                {
+                    interleavedData[i] *= musicVol;
+                    interleavedData[i + 1] *= vocalVol;
+                }
+        }
+
+        // Pitch shifting with shared_ptr copy for thread safety
+        if (d->keySemitones.load(std::memory_order_acquire) != 0) {
+            std::shared_ptr<RubberBand::RubberBandStretcher> stretcher;
+            {
+                std::shared_lock lock(d->stretcherMutex);
+                stretcher = d->stretcher;  // Atomic shared_ptr copy
+            }
+
+            if (stretcher) {
+                const float* in[2] = {interleavedData, interleavedData + 1};
+                float* out[2] = {interleavedData, interleavedData + 1};
+
+                stretcher->process(in, static_cast<size_t>(frames), false);
+                size_t available = stretcher->available();
+                if (available >= static_cast<size_t>(frames)) {
+                    stretcher->retrieve(out, static_cast<size_t>(frames));
+                }
+            }
+        }
+
+        // Echo effect
+        if (d->echoLevel.load(std::memory_order_acquire) > 0.001f) {
+            d->applyEcho(interleavedData, frames);
+        }
+    }
+
+    // ============================================================================
+    // EqualizerProcessor Implementation
+    // ============================================================================
 
     EqualizerProcessor::EqualizerProcessor() {
         for (int i = 0; i < Bands; ++i) {
@@ -68,125 +463,9 @@ namespace Aegis {
         }
     }
 
-    KaraokeProcessor::KaraokeProcessor()
-    : m_echoBuffer(MaxEchoDelay * 2, 0.0f) {
-    }
-
-    KaraokeProcessor::~KaraokeProcessor() = default;
-
-    void KaraokeProcessor::setKeyChange(int semitones) {
-        m_keySemitones.store(std::clamp(semitones, -12, 12));
-    }
-
-    void KaraokeProcessor::updatePitchRatio(int sampleRate) {
-        int semitones = m_keySemitones.load();
-        if (semitones == 0) {
-            std::unique_lock<std::shared_mutex> lock(m_stretcherMutex);
-            m_stretcher.reset();
-            return;
-        }
-
-        std::unique_lock<std::shared_mutex> lock(m_stretcherMutex);
-        if (!m_stretcher || m_currentSampleRate.load() != sampleRate) {
-            m_currentSampleRate.store(sampleRate);
-            m_stretcher = std::make_unique<RubberBand::RubberBandStretcher>(
-                sampleRate, 2,
-                RubberBand::RubberBandStretcher::DefaultOptions
-            );
-        }
-
-        double ratio = std::pow(2.0, semitones / 12.0);
-        m_stretcher->setPitchScale(ratio);
-    }
-
-    void KaraokeProcessor::setEnabled(bool enabled) {
-        m_enabled.store(enabled);
-        if (!enabled) {
-            std::fill(m_echoBuffer.begin(), m_echoBuffer.end(), 0.0f);
-            m_echoPos.store(0);
-        }
-    }
-
-    void KaraokeProcessor::process(float* data, int frames, int sampleRate) {
-        if (!m_enabled.load()) return;
-
-        // Pitch shifting setup
-        if (m_keySemitones.load() != 0 || m_stretcher) {
-            updatePitchRatio(sampleRate);
-        }
-
-        // Vocal suppression (MS processing)
-        if (m_vocalSuppression.load()) {
-            applyVocalSuppression(data, frames);
-        }
-
-        // Volume controls
-        double musicVol = m_musicVolume.load();
-        double vocalVol = m_vocalVolume.load();
-        if (musicVol != 1.0 || vocalVol != 0.0) {
-            for (int i = 0; i < frames * 2; i += 2) {
-                data[i] *= musicVol;     // Left channel treated as music
-                data[i+1] *= vocalVol;   // Right channel treated as vocal
-            }
-        }
-
-        // Pitch shifting with thread-safe stretcher access
-        if (m_keySemitones.load() != 0) {
-            std::shared_lock<std::shared_mutex> lock(m_stretcherMutex);
-            if (m_stretcher) {
-                const int channels = 2;
-                const float *in[channels];
-                float *out[channels];
-                for (int c = 0; c < channels; ++c) {
-                    in[c]  = data + c;
-                    out[c] = data + c;
-                }
-
-                m_stretcher->process(in, static_cast<size_t>(frames), false);
-                size_t available = m_stretcher->available();
-                if (available >= static_cast<size_t>(frames)) {
-                    m_stretcher->retrieve(out, static_cast<size_t>(frames));
-                }
-            }
-        }
-
-        // Echo effect
-        if (m_echoLevel.load() > 0.001) {
-            applyEcho(data, frames);
-        }
-    }
-
-    void KaraokeProcessor::applyVocalSuppression(float* data, int frames) {
-        for (int i = 0; i < frames * 2; i += 2) {
-            float left = data[i];
-            float right = data[i + 1];
-            float center = (left + right) * 0.5f;
-            float side = (left - right) * 0.5f;
-
-            data[i] = side * 2.0f;
-            data[i + 1] = -side * 2.0f;
-        }
-    }
-
-    void KaraokeProcessor::applyEcho(float* data, int frames) {
-        float level = m_echoLevel.load();
-        size_t delaySamples = static_cast<size_t>(m_currentSampleRate.load() * 0.3);
-        delaySamples = std::min(delaySamples, MaxEchoDelay);
-
-        size_t pos = m_echoPos.load();
-
-        for (int i = 0; i < frames * 2; i += 2) {
-            for (int ch = 0; ch < 2; ++ch) {
-                size_t idx = (pos + ch) % (MaxEchoDelay * 2);
-                float echoSample = m_echoBuffer[idx];
-
-                m_echoBuffer[idx] = data[i + ch] + echoSample * 0.5f;
-                data[i + ch] = data[i + ch] * (1.0f - level) + echoSample * level;
-            }
-            pos = (pos + 2) % (MaxEchoDelay * 2);
-        }
-        m_echoPos.store(pos);
-    }
+    // ============================================================================
+    // Crossfader Implementation
+    // ============================================================================
 
     Crossfader::Crossfader() = default;
 
@@ -227,6 +506,10 @@ namespace Aegis {
         qint64 elapsed = QDateTime::currentMSecsSinceEpoch() - m_startTime;
         return std::min(1.0, elapsed / m_duration);
     }
+
+    // ============================================================================
+    // ModTrackerPlayback Implementation
+    // ============================================================================
 
     ModTrackerPlayback::ModTrackerPlayback(AudioEngine* engine)
     : QObject(engine), m_engine(engine) {
@@ -337,6 +620,40 @@ namespace Aegis {
             stop();
         }
     }
+
+    QString ModTrackerPlayback::title() const {
+        if (!m_module) return QString();
+        return QString::fromStdString(m_module->get_metadata("title"));
+    }
+
+    QString ModTrackerPlayback::artist() const {
+        if (!m_module) return QString();
+        return QString::fromStdString(m_module->get_metadata("artist"));
+    }
+
+    int ModTrackerPlayback::getNumPatterns() const {
+        if (!m_module) return 0;
+        return m_module->get_num_patterns();
+    }
+
+    int ModTrackerPlayback::getNumChannels() const {
+        if (!m_module) return 0;
+        return m_module->get_num_channels();
+    }
+
+    int ModTrackerPlayback::getCurrentPattern() const {
+        if (!m_module) return 0;
+        return m_module->get_current_pattern();
+    }
+
+    int ModTrackerPlayback::getCurrentRow() const {
+        if (!m_module) return 0;
+        return m_module->get_current_row();
+    }
+
+    // ============================================================================
+    // AudioEngine Implementation
+    // ============================================================================
 
     AudioEngine::AudioEngine(QObject *parent)
     : QObject(parent)
@@ -500,6 +817,19 @@ namespace Aegis {
         ebur128_loudness_global(m_eburState.get(), &m_integrated);
 
         emit loudnessUpdated();
+    }
+
+    QVariantList AudioEngine::spectrumData() const {
+        QMutexLocker lock(&m_mutex);
+        QVariantList list;
+        for (double v : m_spectrum) {
+            list.append(v);
+        }
+        return list;
+    }
+
+    double AudioEngine::integratedLoudness() {
+        return m_integrated;
     }
 
     void AudioEngine::EburStateDeleter::operator()(ebur128_state* p) const {

@@ -7,7 +7,12 @@
 #include <QFuture>
 #include <QThreadPool>
 #include <QVariantMap>
+
+#ifdef QT_SQL_LIB
 #include <QSqlDatabase>
+#else
+class QSqlDatabase;
+#endif
 #include <QSemaphore>
 #include <QMutex>
 #include <memory>

@@ -1,4 +1,8 @@
-// mediaplayer.cpp - Media player with audio_output integration
+// mediaplayer.cpp - Unified media player with real-time audio processing
+
+#include "audio.h"
+#include "audio_output.h"
+#include "audio_effects.h"
 #include "mediaplayer.h"
 #include "library.h"
 #include "playlist.h"
@@ -7,79 +11,228 @@
 #include <QFileInfo>
 #include <QDebug>
 #include <algorithm>
+#include <atomic>
+#include <memory>
 
 namespace Aegis {
 
+    // ============================================================================
+    // Lock-Free Audio Ring Buffer
+    // ============================================================================
+
+    template<typename T, size_t Size>
+    class AudioRingBuffer {
+        static_assert((Size & (Size - 1)) == 0, "Size must be power of two");
+
+    private:
+        static constexpr size_t MASK = Size - 1;
+        std::array<T, Size> m_buffer;
+        std::atomic<size_t> m_writeIndex{0};
+        std::atomic<size_t> m_readIndex{0};
+
+        // Cache line padding to prevent false sharing
+        char padding[64];
+
+    public:
+        AudioRingBuffer() {
+            m_buffer.fill(T(0));
+        }
+
+        size_t write(const T* data, size_t count) {
+            size_t write = m_writeIndex.load(std::memory_order_relaxed);
+            size_t read = m_readIndex.load(std::memory_order_acquire);
+
+            size_t available = Size - (write - read);
+            size_t toWrite = std::min(count, available);
+
+            for (size_t i = 0; i < toWrite; ++i) {
+                m_buffer[(write + i) & MASK] = data[i];
+            }
+
+            m_writeIndex.store(write + toWrite, std::memory_order_release);
+            return toWrite;
+        }
+
+        size_t read(T* data, size_t maxCount) {
+            size_t read = m_readIndex.load(std::memory_order_relaxed);
+            size_t write = m_writeIndex.load(std::memory_order_acquire);
+
+            size_t available = write - read;
+            size_t toRead = std::min(maxCount, available);
+
+            for (size_t i = 0; i < toRead; ++i) {
+                data[i] = m_buffer[(read + i) & MASK];
+            }
+
+            m_readIndex.store(read + toRead, std::memory_order_release);
+            return toRead;
+        }
+
+        size_t available() const {
+            return m_writeIndex.load(std::memory_order_acquire) -
+            m_readIndex.load(std::memory_order_acquire);
+        }
+
+        void reset() {
+            m_writeIndex.store(0, std::memory_order_release);
+            m_readIndex.store(0, std::memory_order_release);
+        }
+    };
+
+    // ============================================================================
+    // MediaPlayer Private Implementation
+    // ============================================================================
+
+    class MediaPlayer::Private {
+    public:
+        // Dependencies
+        std::shared_ptr<Library> library;
+        std::shared_ptr<Playlist> playlist;
+        std::unique_ptr<AudioEngine> audioEngine;
+        std::unique_ptr<MpvBackend> mpvBackend;
+        std::unique_ptr<AudioOutput> audioOutput;
+
+        // State with proper memory ordering
+        std::atomic<PlaybackState> state{PlaybackState::Stopped};
+        std::atomic<BackendType> activeBackend{BackendType::None};
+        std::atomic<double> volume{1.0};
+        std::atomic<bool> muted{false};
+        std::atomic<bool> seekable{true};
+        std::atomic<int> currentPlaylistIndex{-1};
+
+        // Current media
+        QUrl source;
+        TrackMetadata metadata;
+
+        // Position tracking with high precision
+        std::atomic<double> position{0.0};
+        std::atomic<double> duration{0.0};
+        QTimer positionTimer;
+
+        // Lock-free audio buffer
+        static constexpr size_t AudioBufferSize = 65536;  // 64k samples
+        AudioRingBuffer<float, AudioBufferSize> audioBuffer;
+        std::atomic<int> audioSampleRate{48000};
+
+        // Settings
+        Settings* settings;
+
+        // Performance monitoring
+        std::atomic<uint64_t> totalBytesPlayed{0};
+        std::atomic<uint64_t> underruns{0};
+
+        explicit Private(Settings* s) : settings(s) {}
+
+        ~Private() = default;
+    };
+
+    // ============================================================================
+    // MediaPlayer Implementation
+    // ============================================================================
+
     MediaPlayer::MediaPlayer(std::unique_ptr<AudioOutput> output,
                              std::shared_ptr<Library> library,
-                             QObject *parent)
+                             QObject* parent)
     : QObject(parent)
-    , m_library(library)
-    , m_output(std::move(output))
-    , m_audioEngine(std::make_unique<AudioEngine>(this))
-    , m_mpvBackend(std::make_unique<MpvBackend>(this))
-    , m_settings(Settings::instance())
-    {
-        // Initialize audio output if not provided
-        if (!m_output) {
+    , d(std::make_unique<Private>(Settings::instance())) {
+
+        d->library = library;
+        d->audioEngine = std::make_unique<AudioEngine>(this);
+        d->mpvBackend = std::make_unique<MpvBackend>(this);
+
+        // Initialize audio output
+        if (output) {
+            d->audioOutput = std::move(output);
+        } else {
             initializeAudioOutput();
         }
 
-        // Setup position update timer (10Hz for smooth UI)
-        m_positionTimer.setInterval(100);
-        connect(&m_positionTimer, &QTimer::timeout, this, &MediaPlayer::updatePosition);
+        // Setup position timer (60 Hz for smooth UI)
+        d->positionTimer.setInterval(16);  // ~60 fps
+        connect(&d->positionTimer, &QTimer::timeout, this, [this]() {
+            if (d->state.load() == PlaybackState::Playing) {
+                updatePosition();
+            }
+        });
 
         // Connect MPV backend signals
-        connect(m_mpvBackend.get(), &MpvBackend::positionChanged,
-                this, &MediaPlayer::onMpvPositionChanged);
-        connect(m_mpvBackend.get(), &MpvBackend::durationChanged,
-                this, &MediaPlayer::onMpvDurationChanged);
-        connect(m_mpvBackend.get(), &MpvBackend::stateChanged,
-                this, &MediaPlayer::onMpvStateChanged);
-        connect(m_mpvBackend.get(), &MpvBackend::metadataChanged,
-                this, &MediaPlayer::onMpvMetadataChanged);
-        connect(m_mpvBackend.get(), &MpvBackend::finished,
+        connect(d->mpvBackend.get(), &MpvBackend::positionChanged,
+                this, [this](double pos) {
+                    d->position.store(pos, std::memory_order_release);
+                    emit positionChanged(static_cast<qint64>(pos * 1000));
+                });
+
+        connect(d->mpvBackend.get(), &MpvBackend::durationChanged,
+                this, [this](double dur) {
+                    d->duration.store(dur, std::memory_order_release);
+                    emit durationChanged(static_cast<qint64>(dur * 1000));
+                });
+
+        connect(d->mpvBackend.get(), &MpvBackend::stateChanged,
+                this, [this](int state) {
+                    onMpvStateChanged(state);
+                });
+
+        connect(d->mpvBackend.get(), &MpvBackend::metadataChanged,
+                this, [this](const QVariantMap& md) {
+                    syncMetadataFromMpv(md);
+                });
+
+        connect(d->mpvBackend.get(), &MpvBackend::finished,
                 this, &MediaPlayer::onMpvFinished);
-        connect(m_mpvBackend.get(), &MpvBackend::error,
+
+        connect(d->mpvBackend.get(), &MpvBackend::error,
                 this, &MediaPlayer::onMpvError);
 
-        // Setup MPV audio callback - CRITICAL: Connect MPV to AudioEngine/AudioOutput
+        // Setup MPV audio callback
         setupMpvAudioCallback();
 
-        // Connect Tracker signals via AudioEngine
-        ModTrackerPlayback *tracker = m_audioEngine->tracker();
+        // Connect tracker signals
+        auto* tracker = d->audioEngine->tracker();
         connect(tracker, &ModTrackerPlayback::positionChanged,
-                this, &MediaPlayer::onTrackerPositionChanged);
+                this, [this]() {
+                    if (d->activeBackend.load() == BackendType::Tracker) {
+                        d->position.store(d->audioEngine->tracker()->position(),
+                                          std::memory_order_release);
+                        emit positionChanged(static_cast<qint64>(d->position.load() * 1000));
+                    }
+                });
+
         connect(tracker, &ModTrackerPlayback::finished,
                 this, &MediaPlayer::onTrackerFinished);
+
         connect(tracker, &ModTrackerPlayback::error,
                 this, &MediaPlayer::onTrackerError);
 
-        // Connect AudioOutput signals
-        if (m_output) {
-            connect(m_output.get(), &AudioOutput::stateChanged,
-                    this, &MediaPlayer::onAudioOutputStateChanged);
-            connect(m_output.get(), &AudioOutput::underrunDetected,
-                    this, &MediaPlayer::onAudioOutputUnderrun);
-            connect(m_output.get(), &AudioOutput::error,
+        // Connect audio output signals
+        if (d->audioOutput) {
+            connect(d->audioOutput.get(), &AudioOutput::stateChanged,
+                    this, [this](bool playing) {
+                        qDebug() << "Audio output state changed:" << playing;
+                    });
+
+            connect(d->audioOutput.get(), &AudioOutput::underrunDetected,
+                    this, [this]() {
+                        d->underruns.fetch_add(1, std::memory_order_relaxed);
+                        qWarning() << "Audio underrun #" << d->underruns.load();
+                    });
+
+            connect(d->audioOutput.get(), &AudioOutput::error,
                     this, &MediaPlayer::onMpvError);
         }
 
-        // Volume restoration
-        m_volume = m_settings->value("Audio/Volume", 1.0).toDouble();
-        if (m_output) {
-            m_output->setVolume(m_volume);
+        // Restore volume
+        d->volume.store(d->settings->value("Audio/Volume", 1.0).toDouble(),
+                        std::memory_order_release);
+        if (d->audioOutput) {
+            d->audioOutput->setVolume(d->volume.load());
         }
-        m_mpvBackend->setVolume(100.0);  // MPV volume at 100%, we control via AudioOutput
-
-        // Setup tracker audio output callback
-        // Tracker audio flows through AudioEngine then to AudioOutput
+        d->mpvBackend->setVolume(100.0);  // MPV at 100%, we control via AudioOutput
     }
 
     MediaPlayer::~MediaPlayer() = default;
 
     void MediaPlayer::initializeAudioOutput() {
-        // Auto-detect best backend (PipeWire preferred)
         OutputConfig config;
         config.sampleRate = 48000;
         config.channels = 2;
@@ -88,22 +241,18 @@ namespace Aegis {
         config.realtimePriority = true;
         config.preferredBackend = OutputBackend::Auto;
 
-        m_output = AudioOutputFactory::create(config.preferredBackend);
-        if (m_output) {
-            if (!m_output->initialize(config)) {
-                qWarning() << "Failed to initialize audio output, trying fallback";
-                m_output.reset();
-                m_output = AudioOutputFactory::create(OutputBackend::QtMultimedia);
-                if (m_output) {
-                    m_output->initialize(config);
-                }
+        d->audioOutput = AudioOutputFactory::create(config.preferredBackend);
+        if (!d->audioOutput || !d->audioOutput->initialize(config)) {
+            qWarning() << "Primary audio backend failed, trying fallback";
+            d->audioOutput = AudioOutputFactory::create(OutputBackend::QtMultimedia);
+            if (d->audioOutput) {
+                d->audioOutput->initialize(config);
             }
         }
 
-        if (m_output) {
-            // Setup pull-mode audio callback
-            // AudioOutput calls us when it needs data
-            m_output->setAudioCallback([this](float* buffer, int frames) {
+        if (d->audioOutput) {
+            // Setup real-time audio callback
+            d->audioOutput->setAudioCallback([this](float* buffer, int frames) {
                 processAudioOutput(buffer, frames);
             });
         } else {
@@ -112,64 +261,55 @@ namespace Aegis {
     }
 
     void MediaPlayer::setupMpvAudioCallback() {
-        // Configure MPV to send raw PCM audio to our callback
-        // This bypasses MPV's internal audio output and lets us control it
+        d->mpvBackend->setAudioCallback([this](const QByteArray& data, int sampleRate) {
+            d->audioSampleRate.store(sampleRate, std::memory_order_release);
 
-        // Option 1: Use audio-filter with export (if available)
-        // Option 2: Use ao=null with audio-data callback (preferred)
-
-        m_mpvBackend->setAudioCallback([this](const QByteArray& data, int sampleRate) {
-            // This is called from MPV's thread - we need to be careful
-            // For now, store data for processing in the audio callback
-
-            // Convert QByteArray to float samples
             const float* samples = reinterpret_cast<const float*>(data.constData());
             int sampleCount = data.size() / sizeof(float);
 
-            // Store in ring buffer or process immediately
-            // For simplicity, we'll process in processAudioOutput()
+            // Write to lock-free buffer
+            size_t written = d->audioBuffer.write(samples, sampleCount);
+            d->totalBytesPlayed.fetch_add(written * sizeof(float),
+                                          std::memory_order_relaxed);
 
-            m_audioSampleRate = sampleRate;
-
-            // Append to buffer (thread-safe queue would be better)
-            std::lock_guard<std::mutex> lock(m_audioMutex);
-            m_audioBuffer.insert(m_audioBuffer.end(), samples, samples + sampleCount);
+            if (written < static_cast<size_t>(sampleCount)) {
+                qWarning() << "Audio buffer overflow, dropped"
+                << (sampleCount - written) << "samples";
+            }
         });
     }
 
     void MediaPlayer::processAudioOutput(float* buffer, int frames) {
-        // This is called by AudioOutput (PipeWire/Qt) when it needs audio
-
-        int channels = m_output ? m_output->channels() : 2;
+        int channels = d->audioOutput ? d->audioOutput->channels() : 2;
         int samplesNeeded = frames * channels;
 
         // Clear output buffer
         std::fill(buffer, buffer + samplesNeeded, 0.0f);
 
-        switch (m_activeBackend) {
-            case BackendType::Mpv: {
-                // Pull from MPV audio buffer
-                // Apply AudioEngine effects if enabled
-                std::lock_guard<std::mutex> lock(m_audioMutex);
+        BackendType backend = d->activeBackend.load(std::memory_order_acquire);
 
-                int samplesAvailable = std::min(static_cast<int>(m_audioBuffer.size()), samplesNeeded);
-                if (samplesAvailable > 0) {
-                    std::copy(m_audioBuffer.begin(), m_audioBuffer.begin() + samplesAvailable, buffer);
-                    m_audioBuffer.erase(m_audioBuffer.begin(), m_audioBuffer.begin() + samplesAvailable);
+        switch (backend) {
+            case BackendType::Mpv: {
+                // Read from lock-free buffer
+                size_t samplesRead = d->audioBuffer.read(buffer, samplesNeeded);
+
+                // Fill remaining with silence
+                if (samplesRead < static_cast<size_t>(samplesNeeded)) {
+                    std::fill(buffer + samplesRead, buffer + samplesNeeded, 0.0f);
                 }
 
-                // Apply AudioEngine processing (EQ, karaoke, etc.)
-                if (m_audioEngine->processingEnabled() && channels == 2) {
-                    m_audioEngine->processBuffer(buffer, frames, m_audioSampleRate, channels);
+                // Apply audio engine processing
+                if (d->audioEngine->processingEnabled() && channels == 2) {
+                    int sampleRate = d->audioSampleRate.load(std::memory_order_acquire);
+                    d->audioEngine->processBuffer(buffer, frames, sampleRate, channels);
                 }
                 break;
             }
 
             case BackendType::Tracker: {
-                // Get audio from tracker playback
-                ModTrackerPlayback* tracker = m_audioEngine->tracker();
+                auto* tracker = d->audioEngine->tracker();
                 if (tracker && tracker->isPlaying()) {
-                    // Tracker generates audio into buffer
+                    // Tracker renders directly to buffer
                     // AudioEngine processes it
                 }
                 break;
@@ -180,39 +320,39 @@ namespace Aegis {
                 break;
         }
 
-        // Apply global volume (if not handled by AudioOutput)
-        if (!m_output && m_volume != 1.0) {
-            for (int i = 0; i < samplesNeeded; i++) {
-                buffer[i] *= m_volume;
+        // Apply volume
+        if (!d->audioOutput) {
+            double vol = d->volume.load(std::memory_order_acquire);
+            if (vol != 1.0) {
+                for (int i = 0; i < samplesNeeded; ++i) {
+                    buffer[i] *= vol;
+                }
             }
         }
 
         // Apply mute
-        if (m_muted) {
+        if (d->muted.load(std::memory_order_acquire)) {
             std::fill(buffer, buffer + samplesNeeded, 0.0f);
         }
     }
 
-    // ================ Load & Backend Selection ================
-
-    void MediaPlayer::load(const QUrl &url) {
+    void MediaPlayer::load(const QUrl& url) {
         if (!url.isValid()) {
-            emit error("Invalid URL");
+            emit error(tr("Invalid URL"));
             return;
         }
 
-        if (!m_output || !m_output->isInitialized()) {
-            emit error("Audio output not initialized");
+        if (!d->audioOutput || !d->audioOutput->isInitialized()) {
+            emit error(tr("Audio output not initialized"));
             return;
         }
 
         cleanupCurrentPlayback();
-        m_source = url;
+        d->source = url;
         emit sourceChanged(url);
 
         QString path = url.toLocalFile();
 
-        // Detect tracker files
         if (isTrackerFile(path)) {
             loadTracker(path);
         } else {
@@ -220,9 +360,9 @@ namespace Aegis {
         }
     }
 
-    void MediaPlayer::loadTracker(const QString &path) {
-        if (!m_audioEngine->loadTrackerModule(path)) {
-            emit error("Failed to load tracker module: " + path);
+    void MediaPlayer::loadTracker(const QString& path) {
+        if (!d->audioEngine->loadTrackerModule(path)) {
+            emit error(tr("Failed to load tracker module: %1").arg(path));
             setState(PlaybackState::Error);
             return;
         }
@@ -230,91 +370,82 @@ namespace Aegis {
         setBackend(BackendType::Tracker);
         syncMetadataFromTracker();
 
-        m_seekable = true;
+        d->seekable.store(true, std::memory_order_release);
         emit seekableChanged(true);
         setState(PlaybackState::Stopped);
 
-        // Auto-play if setting enabled
-        if (m_settings->value("Playback/PlayOnLoad", true).toBool()) {
+        if (d->settings->value("Playback/PlayOnLoad", true).toBool()) {
             play();
         }
     }
 
-    void MediaPlayer::loadMpv(const QString &url) {
-        m_mpvBackend->load(url);
+    void MediaPlayer::loadMpv(const QUrl& url) {
+        d->mpvBackend->load(url.toLocalFile());
         setBackend(BackendType::Mpv);
         resetMetadata();
-
-        // MPV audio will flow through our callback to AudioOutput
-        // We don't start AudioOutput yet - wait for play()
     }
 
     void MediaPlayer::setBackend(BackendType type) {
-        if (m_activeBackend == type) return;
-
-        // Cleanup old backend state
-        if (m_activeBackend == BackendType::Mpv) {
-            m_mpvBackend->stop();
-        } else if (m_activeBackend == BackendType::Tracker) {
-            m_audioEngine->stopTracker();
+        BackendType old = d->activeBackend.exchange(type, std::memory_order_acq_rel);
+        if (old != type) {
+            emit backendChanged(type);
         }
-
-        m_activeBackend = type;
-        emit backendChanged(type);
     }
 
-    bool MediaPlayer::isTrackerFile(const QString &path) const {
-        return m_audioEngine->isTrackerFile(path);
+    bool MediaPlayer::isTrackerFile(const QString& path) const {
+        return d->audioEngine->isTrackerFile(path);
     }
 
     QStringList MediaPlayer::supportedTrackerFormats() const {
-        return m_audioEngine->tracker()->supportedExtensions();
+        return d->audioEngine->tracker()->supportedExtensions();
     }
 
-    // ================ Playback Controls ================
-
     void MediaPlayer::play() {
-        if (m_state == PlaybackState::Playing) return;
+        if (d->state.load() == PlaybackState::Playing) return;
 
-        if (!m_output || !m_output->isInitialized()) {
-            emit error("Audio output not available");
+        if (!d->audioOutput || !d->audioOutput->isInitialized()) {
+            emit error(tr("Audio output not available"));
             return;
         }
 
-        switch (m_activeBackend) {
+        BackendType backend = d->activeBackend.load(std::memory_order_acquire);
+
+        switch (backend) {
             case BackendType::Mpv:
-                // Start audio output first, then MPV
-                m_output->start();
-                m_mpvBackend->play();
+                d->audioOutput->start();
+                d->mpvBackend->play();
+                d->positionTimer.start();
                 break;
 
             case BackendType::Tracker:
-                // Start audio output, then tracker
-                m_output->start();
-                m_audioEngine->playTracker();
-                m_positionTimer.start();
+                d->audioOutput->start();
+                d->audioEngine->playTracker();
+                d->positionTimer.start();
                 setState(PlaybackState::Playing);
                 break;
 
             default:
-                emit error("No media loaded");
+                emit error(tr("No media loaded"));
                 return;
         }
     }
 
     void MediaPlayer::pause() {
-        if (m_state != PlaybackState::Playing) return;
+        if (d->state.load() != PlaybackState::Playing) return;
 
-        switch (m_activeBackend) {
+        BackendType backend = d->activeBackend.load(std::memory_order_acquire);
+
+        switch (backend) {
             case BackendType::Mpv:
-                m_mpvBackend->pause();
-                m_output->stop();  // Stop audio output to free device
+                d->mpvBackend->pause();
+                d->audioOutput->stop();
+                d->positionTimer.stop();
                 break;
 
             case BackendType::Tracker:
-                m_audioEngine->pauseTracker();
-                m_output->stop();
-                m_positionTimer.stop();
+                d->audioEngine->pauseTracker();
+                d->audioOutput->stop();
+                d->positionTimer.stop();
                 setState(PlaybackState::Paused);
                 break;
 
@@ -324,7 +455,7 @@ namespace Aegis {
     }
 
     void MediaPlayer::togglePause() {
-        if (m_state == PlaybackState::Playing) {
+        if (d->state.load() == PlaybackState::Playing) {
             pause();
         } else {
             play();
@@ -332,19 +463,22 @@ namespace Aegis {
     }
 
     void MediaPlayer::stop() {
-        if (m_state == PlaybackState::Stopped) return;
+        if (d->state.load() == PlaybackState::Stopped) return;
 
-        switch (m_activeBackend) {
+        BackendType backend = d->activeBackend.load(std::memory_order_acquire);
+
+        switch (backend) {
             case BackendType::Mpv:
-                m_mpvBackend->stop();
-                m_output->stop();
+                d->mpvBackend->stop();
+                d->audioOutput->stop();
+                d->positionTimer.stop();
                 break;
 
             case BackendType::Tracker:
-                m_audioEngine->stopTracker();
-                m_output->stop();
-                m_positionTimer.stop();
-                m_trackedPosition = 0;
+                d->audioEngine->stopTracker();
+                d->audioOutput->stop();
+                d->positionTimer.stop();
+                d->position.store(0.0, std::memory_order_release);
                 emit positionChanged(0);
                 break;
 
@@ -360,17 +494,19 @@ namespace Aegis {
     }
 
     void MediaPlayer::seekSeconds(double seconds) {
-        if (!m_seekable) return;
+        if (!d->seekable.load(std::memory_order_acquire)) return;
 
-        switch (m_activeBackend) {
+        BackendType backend = d->activeBackend.load(std::memory_order_acquire);
+
+        switch (backend) {
             case BackendType::Mpv:
-                m_mpvBackend->seek(seconds);
+                d->mpvBackend->seek(seconds);
                 break;
 
             case BackendType::Tracker:
-                m_audioEngine->seekTracker(seconds);
-                m_trackedPosition = static_cast<qint64>(seconds * 1000);
-                emit positionChanged(m_trackedPosition);
+                d->audioEngine->seekTracker(seconds);
+                d->position.store(seconds, std::memory_order_release);
+                emit positionChanged(static_cast<qint64>(seconds * 1000));
                 break;
 
             default:
@@ -378,152 +514,187 @@ namespace Aegis {
         }
     }
 
-    // ================ State & Metadata Management ================
+    void MediaPlayer::setVolume(double volume) {
+        volume = std::clamp(volume, 0.0, 1.0);
+        double old = d->volume.exchange(volume, std::memory_order_acq_rel);
+
+        if (old != volume) {
+            if (d->audioOutput) {
+                d->audioOutput->setVolume(volume);
+            }
+            d->mpvBackend->setVolume(100.0);  // MPV at 100%
+            d->audioEngine->tracker()->setVolume(volume);
+            d->settings->setValue("Audio/Volume", volume);
+            emit volumeChanged(volume);
+        }
+    }
+
+    double MediaPlayer::volume() const {
+        return d->volume.load(std::memory_order_acquire);
+    }
+
+    void MediaPlayer::setMuted(bool muted) {
+        bool old = d->muted.exchange(muted, std::memory_order_acq_rel);
+
+        if (old != muted) {
+            if (d->audioOutput) {
+                d->audioOutput->setVolume(muted ? 0.0 : d->volume.load());
+            }
+            emit mutedChanged(muted);
+        }
+    }
+
+    bool MediaPlayer::muted() const {
+        return d->muted.load(std::memory_order_acquire);
+    }
+
+    qint64 MediaPlayer::position() const {
+        return static_cast<qint64>(d->position.load(std::memory_order_acquire) * 1000);
+    }
+
+    qint64 MediaPlayer::duration() const {
+        return static_cast<qint64>(d->duration.load(std::memory_order_acquire) * 1000);
+    }
+
+    PlaybackState MediaPlayer::state() const {
+        return d->state.load(std::memory_order_acquire);
+    }
+
+    QUrl MediaPlayer::source() const {
+        return d->source;
+    }
+
+    TrackMetadata MediaPlayer::metadata() const {
+        return d->metadata;
+    }
+
+    bool MediaPlayer::seekable() const {
+        return d->seekable.load(std::memory_order_acquire);
+    }
+
+    BackendType MediaPlayer::activeBackend() const {
+        return d->activeBackend.load(std::memory_order_acquire);
+    }
+
+    bool MediaPlayer::isTrackerMode() const {
+        return d->activeBackend.load(std::memory_order_acquire) == BackendType::Tracker;
+    }
+
+    int MediaPlayer::currentTrackerPattern() const {
+        if (d->activeBackend.load() != BackendType::Tracker) return 0;
+        return d->audioEngine->tracker()->getCurrentPattern();
+    }
+
+    int MediaPlayer::currentTrackerRow() const {
+        if (d->activeBackend.load() != BackendType::Tracker) return 0;
+        return d->audioEngine->tracker()->getCurrentRow();
+    }
 
     void MediaPlayer::setState(PlaybackState state) {
-        if (m_state == state) return;
-        m_state = state;
-        emit stateChanged(state);
+        PlaybackState old = d->state.exchange(state, std::memory_order_acq_rel);
+        if (old != state) {
+            emit stateChanged(state);
+        }
     }
 
     void MediaPlayer::syncMetadataFromTracker() {
-        ModTrackerPlayback *tracker = m_audioEngine->tracker();
-        m_metadata = TrackMetadata();
-        m_metadata.title = tracker->title();
-        m_metadata.artist = tracker->artist();
-        m_metadata.comment = tracker->comment();
-        m_metadata.duration = static_cast<int>(tracker->duration() * 1000);
-        m_metadata.channels = tracker->getNumChannels();
-        m_metadata.patterns = tracker->getNumPatterns();
-        m_metadata.isTracker = true;
-        m_metadata.hasVideo = false;
+        auto* tracker = d->audioEngine->tracker();
+        d->metadata = TrackMetadata();
+        d->metadata.title = tracker->title();
+        d->metadata.artist = tracker->artist();
+        d->metadata.duration = static_cast<int>(tracker->duration() * 1000);
+        d->metadata.channels = tracker->getNumChannels();
+        d->metadata.patterns = tracker->getNumPatterns();
+        d->metadata.isTracker = true;
+        d->metadata.hasVideo = false;
 
-        emit metadataChanged(m_metadata);
-        emit durationChanged(m_metadata.duration);
+        emit metadataChanged(d->metadata);
     }
 
-    void MediaPlayer::syncMetadataFromMpv(const QVariantMap &metadata) {
-        m_metadata = TrackMetadata();
-        m_metadata.title = metadata.value("title").toString();
-        m_metadata.artist = metadata.value("artist").toString();
-        m_metadata.album = metadata.value("album").toString();
-        m_metadata.year = metadata.value("year").toInt();
-        m_metadata.hasVideo = metadata.value("vid", false).toBool();
-        m_metadata.isTracker = false;
+    void MediaPlayer::syncMetadataFromMpv(const QVariantMap& metadata) {
+        d->metadata = TrackMetadata();
+        d->metadata.title = metadata.value("title").toString();
+        d->metadata.artist = metadata.value("artist").toString();
+        d->metadata.album = metadata.value("album").toString();
+        d->metadata.year = metadata.value("year").toInt();
+        d->metadata.hasVideo = metadata.value("vid", false).toBool();
+        d->metadata.isTracker = false;
 
-        emit metadataChanged(m_metadata);
+        emit metadataChanged(d->metadata);
     }
 
     void MediaPlayer::resetMetadata() {
-        m_metadata = TrackMetadata();
+        d->metadata = TrackMetadata();
     }
 
     void MediaPlayer::cleanupCurrentPlayback() {
         stop();
-        m_source.clear();
-        if (m_activeBackend == BackendType::Tracker) {
-            m_audioEngine->unloadTracker();
+        d->source.clear();
+        if (d->activeBackend.load() == BackendType::Tracker) {
+            d->audioEngine->unloadTracker();
         }
     }
 
-    // ================ Signal Handlers ================
+    void MediaPlayer::updatePosition() {
+        BackendType backend = d->activeBackend.load(std::memory_order_acquire);
 
-    void MediaPlayer::onMpvPositionChanged(double position) {
-        emit positionChanged(static_cast<qint64>(position * 1000));
-    }
-
-    void MediaPlayer::onMpvDurationChanged(double duration) {
-        emit durationChanged(static_cast<qint64>(duration * 1000));
-        m_metadata.duration = static_cast<int>(duration * 1000);
+        if (backend == BackendType::Tracker) {
+            double pos = d->audioEngine->tracker()->position();
+            d->position.store(pos, std::memory_order_release);
+            emit positionChanged(static_cast<qint64>(pos * 1000));
+        }
     }
 
     void MediaPlayer::onMpvStateChanged(int state) {
         switch (state) {
-            case 0: // Idle
+            case 0:  // Idle
                 setState(PlaybackState::Stopped);
                 break;
-            case 1: // Loading
+            case 1:  // Loading
                 setState(PlaybackState::Buffering);
                 break;
-            case 2: // Playing
+            case 2:  // Playing
                 setState(PlaybackState::Playing);
-                m_positionTimer.start();
                 break;
-            case 3: // Paused
+            case 3:  // Paused
                 setState(PlaybackState::Paused);
-                m_positionTimer.stop();
                 break;
         }
     }
 
-    void MediaPlayer::onMpvMetadataChanged(const QVariantMap &metadata) {
-        syncMetadataFromMpv(metadata);
-    }
-
     void MediaPlayer::onMpvFinished() {
-        m_positionTimer.stop();
+        d->positionTimer.stop();
         emit finished();
         loadNextPlaylistItem();
     }
 
-    void MediaPlayer::onMpvError(const QString &message) {
-        emit error("MPV: " + message);
+    void MediaPlayer::onMpvError(const QString& message) {
+        emit error(tr("MPV: %1").arg(message));
         setState(PlaybackState::Error);
     }
 
-    void MediaPlayer::onMpvAudioData(const QByteArray &data, int sampleRate) {
-        // Handled in setupMpvAudioCallback
-        Q_UNUSED(data)
-        Q_UNUSED(sampleRate)
-    }
-
-    // Tracker handlers
-    void MediaPlayer::onTrackerPositionChanged() {
-        if (m_activeBackend != BackendType::Tracker) return;
-        m_trackedPosition = static_cast<qint64>(m_audioEngine->tracker()->position() * 1000);
-        emit positionChanged(m_trackedPosition);
-    }
-
     void MediaPlayer::onTrackerFinished() {
-        m_positionTimer.stop();
+        d->positionTimer.stop();
         setState(PlaybackState::Stopped);
         emit finished();
         loadNextPlaylistItem();
     }
 
-    void MediaPlayer::onTrackerError(const QString &message) {
-        emit error("Tracker: " + message);
+    void MediaPlayer::onTrackerError(const QString& message) {
+        emit error(tr("Tracker: %1").arg(message));
         setState(PlaybackState::Error);
     }
 
-    // Audio output handlers
-    void MediaPlayer::onAudioOutputStateChanged(bool playing) {
-        qDebug() << "Audio output state changed:" << playing;
-    }
-
-    void MediaPlayer::onAudioOutputUnderrun() {
-        qWarning() << "Audio output underrun detected";
-    }
-
-    void MediaPlayer::updatePosition() {
-        if (m_activeBackend == BackendType::Tracker) {
-            onTrackerPositionChanged();
-        }
-        // MPV position updated via signal
-    }
-
-    // ================ Playlist Integration ================
-
     void MediaPlayer::setPlaylist(std::shared_ptr<Playlist> playlist) {
-        m_playlist = playlist;
-        m_playlistMode = (playlist != nullptr);
+        d->playlist = playlist;
     }
 
     void MediaPlayer::playAt(int index) {
-        if (!m_playlist) return;
-        auto item = m_playlist->at(index);
+        if (!d->playlist) return;
+
+        auto item = d->playlist->at(index);
         if (item.isValid()) {
-            m_currentPlaylistIndex = index;
+            d->currentPlaylistIndex.store(index, std::memory_order_release);
             load(item.url());
         }
     }
@@ -533,101 +704,36 @@ namespace Aegis {
     }
 
     void MediaPlayer::previous() {
-        if (!m_playlist || m_currentPlaylistIndex <= 0) return;
-        playAt(m_currentPlaylistIndex - 1);
+        if (!d->playlist) return;
+
+        int current = d->currentPlaylistIndex.load(std::memory_order_acquire);
+        if (current > 0) {
+            playAt(current - 1);
+        }
     }
 
     void MediaPlayer::loadNextPlaylistItem() {
-        if (!m_playlist || !m_playlistMode) return;
+        if (!d->playlist) return;
 
-        int next = m_currentPlaylistIndex + 1;
-        if (next < m_playlist->count()) {
+        int current = d->currentPlaylistIndex.load(std::memory_order_acquire);
+        int next = current + 1;
+
+        if (next < d->playlist->count()) {
             playAt(next);
-        } else if (m_settings->value("Playback/RepeatMode", false).toBool()) {
+        } else if (d->settings->value("Playback/RepeatMode", false).toBool()) {
             playAt(0);
         }
     }
 
-    // ================ Volume & Audio Settings ================
-
-    void MediaPlayer::setVolume(double volume) {
-        volume = std::clamp(volume, 0.0, 1.0);
-        if (m_volume == volume) return;
-
-        m_volume = volume;
-
-        // Control volume via AudioOutput
-        if (m_output) {
-            m_output->setVolume(volume);
-        }
-
-        // Keep MPV at 100%, we control volume
-        m_mpvBackend->setVolume(100.0);
-
-        // Tracker volume via AudioEngine
-        m_audioEngine->tracker()->setVolume(volume);
-
-        m_settings->setValue("Audio/Volume", volume);
-        emit volumeChanged(volume);
-    }
-
-    double MediaPlayer::volume() const {
-        return m_volume;
-    }
-
-    void MediaPlayer::setMuted(bool muted) {
-        if (m_muted == muted) return;
-        m_muted = muted;
-
-        // Mute via AudioOutput
-        if (m_output) {
-            if (muted) {
-                m_output->setVolume(0.0);
-            } else {
-                m_output->setVolume(m_volume);
-            }
-        }
-
-        emit mutedChanged(muted);
-    }
-
-    bool MediaPlayer::muted() const {
-        return m_muted;
-    }
-
-    qint64 MediaPlayer::position() const {
-        if (m_activeBackend == BackendType::Tracker) {
-            return m_trackedPosition;
-        }
-        // MPV position from last signal
-        return 0;
-    }
-
-    qint64 MediaPlayer::duration() const {
-        return m_metadata.duration;
-    }
-
-    int MediaPlayer::currentTrackerPattern() const {
-        if (m_activeBackend != BackendType::Tracker) return 0;
-        return m_audioEngine->tracker()->getCurrentPattern();
-    }
-
-    int MediaPlayer::currentTrackerRow() const {
-        if (m_activeBackend != BackendType::Tracker) return 0;
-        return m_audioEngine->tracker()->getCurrentRow();
-    }
-
     bool MediaPlayer::switchAudioBackend(OutputBackend backend) {
-        bool wasPlaying = (m_state == PlaybackState::Playing);
-        qint64 currentPos = position();
+        bool wasPlaying = (d->state.load() == PlaybackState::Playing);
+        double currentPos = d->position.load();
 
-        // Stop current playback
         stop();
 
-        // Create new output
         auto newOutput = AudioOutputFactory::create(backend);
         if (!newOutput) {
-            emit error("Failed to create audio output backend");
+            emit error(tr("Failed to create audio output backend"));
             return false;
         }
 
@@ -637,40 +743,43 @@ namespace Aegis {
         config.preferredBackend = backend;
 
         if (!newOutput->initialize(config)) {
-            emit error("Failed to initialize audio output backend");
+            emit error(tr("Failed to initialize audio output backend"));
             return false;
         }
 
-        // Replace output
-        m_output = std::move(newOutput);
-
-        // Reconnect signals
-        connect(m_output.get(), &AudioOutput::stateChanged,
-                this, &MediaPlayer::onAudioOutputStateChanged);
-        connect(m_output.get(), &AudioOutput::underrunDetected,
-                this, &MediaPlayer::onAudioOutputUnderrun);
-        connect(m_output.get(), &AudioOutput::error,
-                this, &MediaPlayer::onMpvError);
-
-        // Restore callback
-        m_output->setAudioCallback([this](float* buffer, int frames) {
+        // Transfer callback
+        newOutput->setAudioCallback([this](float* buffer, int frames) {
             processAudioOutput(buffer, frames);
         });
 
-        emit audioBackendChanged();
+        d->audioOutput = std::move(newOutput);
 
-        // Resume if was playing
-        if (wasPlaying && !m_source.isEmpty()) {
-            load(m_source);
-            seek(currentPos);
+        if (wasPlaying && !d->source.isEmpty()) {
+            load(d->source);
+            seekSeconds(currentPos);
             play();
         }
 
+        emit audioBackendChanged();
         return true;
     }
 
     OutputBackend MediaPlayer::currentAudioBackend() const {
-        return m_output ? m_output->backendType() : OutputBackend::Auto;
+        return d->audioOutput ? d->audioOutput->backendType() : OutputBackend::Auto;
+    }
+
+    QString MediaPlayer::audioBackendName() const {
+        return d->audioOutput ?
+        AudioOutputFactory::backendName(d->audioOutput->backendType()) :
+        tr("None");
+    }
+
+    AudioEngine* MediaPlayer::audioEngine() {
+        return d->audioEngine.get();
+    }
+
+    AudioOutput* MediaPlayer::audioOutput() {
+        return d->audioOutput.get();
     }
 
 } // namespace Aegis
