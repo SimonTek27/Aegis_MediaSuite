@@ -95,6 +95,7 @@ namespace Aegis {
         void state_changed(bool playing);
         void error(const QString& message);
         void stats_updated(quint64 bytesPlayed, quint64 framesPlayed);
+        void underrun_detected();
     };
 
     // =============================================================================

@@ -72,10 +72,10 @@ namespace Aegis {
     };
 
     // RAII type aliases for automatic resource management
-    using CdIoPtr = std::unique_ptr<CdIo_t, CdIoDeleter>;
-    using CddaDrivePtr = std::unique_ptr<cdrom_drive_t, CddaDriveDeleter>;
-    using ParanoiaPtr = std::unique_ptr<cdrom_paranoia_t, ParanoiaDeleter>;
-    using SndFilePtr = std::unique_ptr<SNDFILE, SndFileDeleter>;
+    using CdIoPtr        = std::unique_ptr<CdIo_t, CdIoDeleter>;
+    using CddaDrivePtr   = std::unique_ptr<cdrom_drive_t, CddaDriveDeleter>;
+    using ParanoiaPtr    = std::unique_ptr<cdrom_paranoia_t, ParanoiaDeleter>;
+    using SndFilePtr     = std::unique_ptr<SNDFILE, SndFileDeleter>;
 
     // ================ DiscWorker Implementation ================
 
@@ -101,12 +101,11 @@ namespace Aegis {
     {
         stopSafely();
 
-        // Wait for thread termination with timeout
         if (isRunning()) {
-            wait(5000); // 5 second timeout
+            wait(5000);
             if (isRunning()) {
                 qWarning() << "DiscWorker thread did not terminate gracefully";
-                terminate(); // Force termination as last resort
+                terminate();
                 wait(1000);
             }
         }
@@ -170,7 +169,6 @@ namespace Aegis {
     {
         emit statusChanged("Opening disc drive...");
 
-        // Open disc device with libcdio
         CdIoPtr cdio(cdio_open(m_device.toUtf8().constData(), DRIVER_DEVICE));
         if (!cdio) {
             emit error("Failed to open optical drive: " + m_device);
@@ -178,7 +176,6 @@ namespace Aegis {
             return false;
         }
 
-        // Check if disc is present and readable
         discmode_t discMode = cdio_get_discmode(cdio.get());
         if (discMode == CDIO_DISC_NO_INFO || discMode == CDIO_DISC_MODE_NO_INFO) {
             emit error("No disc found or disc is unreadable");
@@ -188,25 +185,16 @@ namespace Aegis {
 
         emit statusChanged("Reading disc structure...");
 
-        // Read disc information
         DiscInfo info = readDiscInfo(cdio.get());
         m_cachedInfo = info;
 
-        // Update status based on disc type
         QString discTypeStr;
         switch (discMode) {
-            case CDIO_DISC_MODE_CD_DA:
-                discTypeStr = "Audio CD";
-                break;
+            case CDIO_DISC_MODE_CD_DA:   discTypeStr = "Audio CD";  break;
             case CDIO_DISC_MODE_DVD_ROM:
-            case CDIO_DISC_MODE_DVD_VIDEO:
-                discTypeStr = "DVD";
-                break;
-            case CDIO_DISC_MODE_BD:
-                discTypeStr = "Blu-ray";
-                break;
-            default:
-                discTypeStr = "Data Disc";
+            case CDIO_DISC_MODE_DVD_VIDEO: discTypeStr = "DVD";     break;
+            case CDIO_DISC_MODE_BD:      discTypeStr = "Blu-ray";   break;
+            default:                     discTypeStr = "Data Disc"; break;
         }
 
         emit statusChanged(QString("Disc detected: %1").arg(discTypeStr));
@@ -224,57 +212,43 @@ namespace Aegis {
     {
         DiscInfo info;
 
-        // Get basic disc information
         track_t firstTrack = cdio_get_first_track_num(cdio);
-        track_t lastTrack = cdio_get_last_track_num(cdio);
-        info.totalTracks = lastTrack - firstTrack + 1;
+        track_t lastTrack  = cdio_get_last_track_num(cdio);
+        info.totalTracks   = lastTrack - firstTrack + 1;
 
-        // Get lead-out position (end of disc)
         lsn_t leadout = cdio_get_track_lsn(cdio, CDIO_CDROM_LEADOUT_TRACK);
 
-        // Process each track
         for (track_t trackNum = firstTrack; trackNum <= lastTrack; ++trackNum) {
             if (m_stop.load()) break;
 
             DiscTrack track;
             track.number = trackNum;
 
-            // Get track start and end positions
             lsn_t start = cdio_get_track_lsn(cdio, trackNum);
-            lsn_t end = (trackNum == lastTrack) ? leadout : cdio_get_track_lsn(cdio, trackNum + 1);
+            lsn_t end   = (trackNum == lastTrack)
+                          ? leadout
+                          : cdio_get_track_lsn(cdio, trackNum + 1);
 
             track.startFrame = static_cast<int>(start);
-            track.endFrame = static_cast<int>(end);
+            track.endFrame   = static_cast<int>(end);
+            track.duration   = static_cast<int>((end - start) / CDIO_CD_FRAMES_PER_SEC);
 
-            // Calculate duration in seconds (75 frames per second for CD-DA)
-            track.duration = static_cast<int>((end - start) / CDIO_CD_FRAMES_PER_SEC);
-
-            // Determine track format
             track_format_t format = cdio_get_track_format(cdio, trackNum);
             track.isAudio = (format == TRACK_FORMAT_AUDIO);
-            track.isData = !track.isAudio;
+            track.isData  = !track.isAudio;
 
-            // Get track format description
             switch (format) {
                 case TRACK_FORMAT_AUDIO:
-                    track.format = "Audio";
-                    track.channels = 2; // CD-DA is always stereo
+                    track.format     = "Audio";
+                    track.channels   = 2;
                     track.sampleRate = 44100;
                     break;
-                case TRACK_FORMAT_DATA:
-                    track.format = "Data";
-                    break;
-                case TRACK_FORMAT_CDI:
-                    track.format = "CD-i";
-                    break;
-                case TRACK_FORMAT_XA:
-                    track.format = "CD-ROM XA";
-                    break;
-                default:
-                    track.format = "Unknown";
+                case TRACK_FORMAT_DATA:  track.format = "Data";       break;
+                case TRACK_FORMAT_CDI:   track.format = "CD-i";       break;
+                case TRACK_FORMAT_XA:    track.format = "CD-ROM XA";  break;
+                default:                 track.format = "Unknown";     break;
             }
 
-            // Extract ISRC if available
             char isrcBuffer[13] = {0};
             if (mmc_get_isrc(cdio, trackNum, isrcBuffer) == DRIVER_OP_SUCCESS) {
                 track.isrc = QString::fromLatin1(isrcBuffer);
@@ -282,20 +256,14 @@ namespace Aegis {
 
             info.tracks.append(track);
 
-            // Emit progress for large discs
             if (info.totalTracks > 20 && trackNum % 5 == 0) {
                 int percent = ((trackNum - firstTrack) * 100) / info.totalTracks;
                 emit operationProgress(QString("Reading track %1/%2").arg(trackNum).arg(lastTrack), percent);
             }
         }
 
-        // Read CD-TEXT metadata if available
         readCDText(cdio, info);
-
-        // Calculate MusicBrainz-compatible disc ID
-        info.discId = calculateDiscId(cdio, info);
-
-        // Detect disc type
+        info.discId   = calculateDiscId(cdio, info);
         info.discType = cdio_get_discmode(cdio);
 
         qDebug() << "Disc scan completed:" << info.totalTracks << "tracks, ID:" << info.discId;
@@ -305,8 +273,6 @@ namespace Aegis {
 
     /**
      * @brief Extract CD-TEXT metadata if available
-     * @param cdio CD I/O handle
-     * @param info Disc info structure to populate
      */
     void DiscWorker::readCDText(CdIo_t *cdio, DiscInfo &info)
     {
@@ -318,21 +284,19 @@ namespace Aegis {
 
         info.hasCDText = true;
 
-        // Extract album-level CD-TEXT
-        const char *albumTitle = cdtext_get(ETITLE, cdtext, 0);
+        const char *albumTitle  = cdtext_get(ETITLE,     cdtext, 0);
         const char *albumArtist = cdtext_get(EPERFORMER, cdtext, 0);
-        const char *albumGenre = cdtext_get(EGENRE, cdtext, 0);
+        const char *albumGenre  = cdtext_get(EGENRE,     cdtext, 0);
 
-        if (albumTitle) info.title = QString::fromUtf8(albumTitle);
+        if (albumTitle)  info.title  = QString::fromUtf8(albumTitle);
         if (albumArtist) info.artist = QString::fromUtf8(albumArtist);
-        if (albumGenre) info.genre = QString::fromUtf8(albumGenre);
+        if (albumGenre)  info.genre  = QString::fromUtf8(albumGenre);
 
-        // Extract track-level CD-TEXT
         for (int i = 0; i < info.tracks.size(); ++i) {
-            const char *trackTitle = cdtext_get(ETITLE, cdtext, i + 1);
+            const char *trackTitle  = cdtext_get(ETITLE,     cdtext, i + 1);
             const char *trackArtist = cdtext_get(EPERFORMER, cdtext, i + 1);
 
-            if (trackTitle) info.tracks[i].title = QString::fromUtf8(trackTitle);
+            if (trackTitle)  info.tracks[i].title  = QString::fromUtf8(trackTitle);
             if (trackArtist) info.tracks[i].artist = QString::fromUtf8(trackArtist);
         }
 
@@ -341,9 +305,6 @@ namespace Aegis {
 
     /**
      * @brief Calculate MusicBrainz-compatible disc ID
-     * @param cdio CD I/O handle
-     * @param info Disc information
-     * @return Disc ID string
      */
     QString DiscWorker::calculateDiscId(CdIo_t *cdio, const DiscInfo &info)
     {
@@ -351,19 +312,18 @@ namespace Aegis {
 
         QStringList offsets;
 
-        // First offset is first track start + 150 sectors
+        // First offset: first track start + 150 sectors
         offsets.append(QString::number(info.tracks.first().startFrame + 150));
 
-        // Add each track's start offset + 150 sectors
+        // Each track's start offset + 150 sectors
         for (const auto &track : info.tracks) {
             offsets.append(QString::number(track.startFrame + 150));
         }
 
-        // Add lead-out offset + 150 sectors
+        // Lead-out offset + 150 sectors
         lsn_t leadout = cdio_get_track_lsn(cdio, CDIO_CDROM_LEADOUT_TRACK);
         offsets.append(QString::number(static_cast<int>(leadout + 150)));
 
-        // Format: totalTracks+firstTrackOffset+trackOffsets+leadoutOffset
         return QString("%1+%2+%3").arg(info.totalTracks).arg(offsets.first()).arg(offsets.join("+"));
     }
 
@@ -380,7 +340,6 @@ namespace Aegis {
 
         emit statusChanged("Initializing CD-DA extraction...");
 
-        // Open disc for CD-DA access
         CddaDrivePtr drive(cdda_identify(m_device.toUtf8().constData(), 0, nullptr));
         if (!drive) {
             emit error("Drive does not support CD-DA extraction");
@@ -392,29 +351,25 @@ namespace Aegis {
             return false;
         }
 
-        // Suppress libcdio verbose messages
         cdda_verbose_set(drive.get(), CDDA_MESSAGE_FORGETIT, CDDA_MESSAGE_FORGETIT);
 
-        // Initialize paranoia for error correction
         ParanoiaPtr paranoia(paranoia_init(drive.get()));
         if (!paranoia) {
             emit error("Failed to initialize paranoia error correction");
             return false;
         }
 
-        // Set paranoia mode based on quality setting
         paranoia_mode_t mode;
-        switch(m_paranoiaLevel) {
-            case 0: mode = PARANOIA_MODE_DISABLE; break;
-            case 1: mode = PARANOIA_MODE_OVERLAP; break;
-            case 2: mode = PARANOIA_MODE_VERIFY; break;
-            default: mode = PARANOIA_MODE_FULL; break;
+        switch (m_paranoiaLevel) {
+            case 0:  mode = PARANOIA_MODE_DISABLE; break;
+            case 1:  mode = PARANOIA_MODE_OVERLAP; break;
+            case 2:  mode = PARANOIA_MODE_VERIFY;  break;
+            default: mode = PARANOIA_MODE_FULL;    break;
         }
         paranoia_modeset(paranoia.get(), mode);
 
-        // Get track sector boundaries
         lsn_t start = cdda_track_firstsector(drive.get(), m_trackNumber);
-        lsn_t end = cdda_track_lastsector(drive.get(), m_trackNumber);
+        lsn_t end   = cdda_track_lastsector(drive.get(), m_trackNumber);
         lsn_t total = end - start;
 
         if (start < 0 || end < 0 || paranoia_seek(paranoia.get(), start, SEEK_SET) < 0) {
@@ -422,46 +377,38 @@ namespace Aegis {
             return false;
         }
 
-        // Create output directory if needed
         QFileInfo outputInfo(m_outputPath);
         QDir().mkpath(outputInfo.path());
 
-        // Setup audio file format
-        SF_INFO sfinfo = {};
-        sfinfo.samplerate = 44100;    // CD-DA standard
-        sfinfo.channels = 2;          // Stereo
-        sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16; // 16-bit WAV
+        SF_INFO sfinfo    = {};
+        sfinfo.samplerate = 44100;
+        sfinfo.channels   = 2;
+        sfinfo.format     = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
 
-        // Open output file
         SndFilePtr outfile(sf_open(m_outputPath.toUtf8().constData(), SFM_WRITE, &sfinfo), sf_close);
         if (!outfile) {
             emit error("Failed to create output file: " + m_outputPath);
             return false;
         }
 
-        // Buffer for audio data (1 sector = 2352 bytes, 2 channels)
         std::vector<float> floatBuffer(CDIO_CD_FRAMESIZE_RAW * 2);
         lsn_t current = start;
-        bool success = true;
+        bool success  = true;
 
         emit statusChanged("Ripping track...");
 
-        // Main ripping loop
         while (current <= end && !m_stop.load()) {
-            // Read sector with paranoia error correction
-            int16_t* rawBuffer = paranoia_read(paranoia.get(), nullptr);
+            int16_t *rawBuffer = paranoia_read(paranoia.get(), nullptr);
             if (!rawBuffer) {
                 emit error("Read error at sector " + QString::number(current));
                 success = false;
                 break;
             }
 
-            // Convert 16-bit integer samples to 32-bit float (-1.0 to 1.0)
             for (int i = 0; i < CDIO_CD_FRAMESIZE_RAW * 2; i++) {
                 floatBuffer[i] = rawBuffer[i] / 32768.0f;
             }
 
-            // Write to output file
             sf_count_t written = sf_writef_float(outfile.get(), floatBuffer.data(), CDIO_CD_FRAMESIZE_RAW);
             if (written != CDIO_CD_FRAMESIZE_RAW) {
                 emit error("Write error at sector " + QString::number(current));
@@ -471,7 +418,6 @@ namespace Aegis {
 
             current++;
 
-            // Emit progress every 100 sectors or when significant progress is made
             if (current % 100 == 0 || current == end) {
                 int percent = static_cast<int>(((current - start) * 100) / total);
                 emit ripProgress(percent);
@@ -479,15 +425,13 @@ namespace Aegis {
             }
         }
 
-        // Handle cancellation
         if (m_stop.load()) {
             emit statusChanged("Ripping cancelled");
-            QFile::remove(m_outputPath); // Clean up partial file
+            QFile::remove(m_outputPath);
             success = false;
         }
 
-        // Close file and report completion
-        outfile.reset(); // Explicit close
+        outfile.reset();
 
         if (success) {
             emit statusChanged("Ripping completed successfully");
@@ -506,8 +450,6 @@ namespace Aegis {
      */
     bool DiscWorker::performRipDisc()
     {
-        // This would iterate through all audio tracks
-        // Implementation similar to performRip() but with track iteration
         emit error("Full disc ripping not yet implemented");
         return false;
     }
@@ -532,115 +474,27 @@ namespace Aegis {
     , m_device(device.isEmpty() ? findDefaultDrive() : device)
     {
         qDebug() << "Disc controller created for device:" << m_device;
-
-        // Try to auto-detect disc on construction
-        if (!m_device.isEmpty()) {
-            QTimer::singleShot(100, this, &Disc::scanDisc);
-        }
     }
 
-    /**
-     * @brief Disc destructor
-     */
     Disc::~Disc()
     {
-        cancelOperation();
+        cleanupWorker();
     }
 
-    /**
-     * @brief Check if disc is present in drive
-     * @return True if readable disc is detected
-     */
-    bool Disc::discPresent() const
-    {
-        CdIoPtr cdio(cdio_open(m_device.toUtf8().constData(), DRIVER_DEVICE));
-        if (!cdio) return false;
+    QString Disc::device() const { return m_device; }
 
-        discmode_t mode = cdio_get_discmode(cdio.get());
-        return (mode != CDIO_DISC_NO_INFO && mode != CDIO_DISC_MODE_NO_INFO);
-    }
-
-    /**
-     * @brief Check if operation is in progress
-     * @return True if worker thread is running
-     */
-    bool Disc::working() const
-    {
-        return m_worker && m_worker->isRunning();
-    }
-
-    /**
-     * @brief Get disc display label
-     * @return Disc title or default label
-     */
-    QString Disc::discLabel() const
-    {
-        if (!m_info.title.isEmpty()) {
-            return m_info.title;
-        } else if (m_info.totalTracks > 0) {
-            return QString("Audio CD (%1 tracks)").arg(m_info.totalTracks);
-        } else {
-            return "Unknown Disc";
-        }
-    }
-
-    /**
-     * @brief Get number of tracks on disc
-     * @return Track count
-     */
-    int Disc::trackCount() const
-    {
-        return m_info.totalTracks;
-    }
-
-    /**
-     * @brief Get device path
-     * @return Optical drive device path
-     */
-    QString Disc::device() const
-    {
-        return m_device;
-    }
-
-    /**
-     * @brief Set optical drive device
-     * @param device Device path
-     */
     void Disc::setDevice(const QString &device)
     {
         if (m_device != device && !device.isEmpty()) {
             m_device = device;
             emit deviceChanged();
-            scanDisc(); // Auto-scan new device
+            scanDisc();
         }
     }
 
-    /**
-     * @brief Check if disc is audio CD
-     * @return True if CD-DA format
-     */
-    bool Disc::isAudioCD() const
-    {
-        return m_info.discType == CDIO_DISC_MODE_CD_DA;
-    }
-
-    /**
-     * @brief Check if disc is DVD-Video
-     * @return True if DVD-Video format
-     */
-    bool Disc::isDVDVideo() const
-    {
-        return m_info.discType == CDIO_DISC_MODE_DVD_VIDEO;
-    }
-
-    /**
-     * @brief Check if disc is Blu-ray
-     * @return True if Blu-ray format
-     */
-    bool Disc::isBluRay() const
-    {
-        return m_info.discType == CDIO_DISC_MODE_BD;
-    }
+    bool Disc::isAudioCD() const  { return m_info.discType == CDIO_DISC_MODE_CD_DA;    }
+    bool Disc::isDVDVideo() const { return m_info.discType == CDIO_DISC_MODE_DVD_VIDEO; }
+    bool Disc::isBluRay() const   { return m_info.discType == CDIO_DISC_MODE_BD;        }
 
     /**
      * @brief Scan disc for metadata
@@ -659,15 +513,13 @@ namespace Aegis {
 
         m_worker = new DiscWorker(m_device, DiscWorker::Task::Scan, 0, QString(), 0, this);
 
-        // Connect worker signals
-        connect(m_worker, &DiscWorker::scanCompleted, this, &Disc::onScanCompleted);
-        connect(m_worker, &DiscWorker::operationProgress, this, &Disc::operationProgress);
-        connect(m_worker, &DiscWorker::statusChanged, this, [this](const QString &status) {
+        connect(m_worker, &DiscWorker::scanCompleted,    this, &Disc::onScanCompleted);
+        connect(m_worker, &DiscWorker::operationProgress,this, &Disc::operationProgress);
+        connect(m_worker, &DiscWorker::statusChanged,    this, [this](const QString &status) {
             emit operationProgress(status, -1);
         });
         connect(m_worker, &DiscWorker::error, this, &Disc::error);
 
-        // Cleanup when worker finishes
         connect(m_worker, &DiscWorker::finished, this, [this]() {
             m_worker->deleteLater();
             m_worker = nullptr;
@@ -690,7 +542,7 @@ namespace Aegis {
             emit discChanged();
             qDebug() << "Disc scan completed:" << info.totalTracks << "tracks";
         } else {
-            m_info = DiscInfo(); // Clear cached info
+            m_info = DiscInfo();
             emit discChanged();
             emit error("Failed to read disc");
         }
@@ -714,11 +566,9 @@ namespace Aegis {
             emit error("Cannot open device for eject");
         }
         #else
-        // Platform-specific ejection code would go here
         emit error("Eject not supported on this platform");
         #endif
 
-        // Clear cached disc info
         m_info = DiscInfo();
         emit discChanged();
     }
@@ -733,7 +583,6 @@ namespace Aegis {
         if (fd >= 0) {
             if (ioctl(fd, CDROMCLOSETRAY) == 0) {
                 qDebug() << "Tray closed for" << m_device;
-                // Wait a moment for disc to be readable, then scan
                 QTimer::singleShot(2000, this, &Disc::scanDisc);
             } else {
                 emit error("Failed to close tray");
@@ -780,7 +629,7 @@ namespace Aegis {
     }
 
     /**
-     * @brief Rip single audio track
+     * @brief Rip single audio track to file
      */
     void Disc::ripTrack(int trackNumber, const QString &outputPath,
                         int paranoiaLevel, const QString &format)
@@ -795,7 +644,6 @@ namespace Aegis {
             return;
         }
 
-        // Validate output path
         QFileInfo outputInfo(outputPath);
         if (!outputInfo.absoluteDir().exists()) {
             emit error("Output directory does not exist");
@@ -825,23 +673,35 @@ namespace Aegis {
 
     /**
      * @brief Handle rip completion
+     *
+     * [FIX Bug #3] La condizione originale `else if (!filePath.isEmpty())` era invertita:
+     * in caso di fallimento performRip() emette ripCompleted(false, QString()), quindi
+     * il path è sempre vuoto e l'errore non veniva mai segnalato. Corretta in `else`.
      */
     void Disc::onRipCompleted(bool success, const QString &filePath)
     {
         if (success) {
             emit operationProgress("Ripping completed successfully", 100);
             qDebug() << "Track ripped to:" << filePath;
-        } else if (!filePath.isEmpty()) {
+        } else {
             emit error("Ripping failed");
         }
     }
 
     /**
      * @brief Rip entire disc
+     *
+     * [FIX Bug #1] La versione originale catturava `ripNext` e `currentTrack` per
+     * riferimento in una std::function locale (stack), causando dangling reference
+     * quando QTimer::singleShot invocava la lambda in modo asincrono, dopo che lo
+     * stack frame di ripWholeDisc era già stato deallocato. Corretta usando
+     * std::shared_ptr per condividere lo stato tra la lambda e il timer.
      */
     void Disc::ripWholeDisc(const QString &outputDir, const QString &format,
                             int paranoiaLevel, bool createCueSheet)
     {
+        Q_UNUSED(createCueSheet)
+
         if (m_info.totalTracks == 0) {
             emit error("No tracks to rip");
             return;
@@ -852,7 +712,6 @@ namespace Aegis {
             return;
         }
 
-        // Create output directory if needed
         QDir dir(outputDir);
         if (!dir.exists()) {
             if (!dir.mkpath(".")) {
@@ -861,42 +720,51 @@ namespace Aegis {
             }
         }
 
-        // Simple sequential ripping implementation
-        // In production, this would use a more sophisticated queuing system
-        int currentTrack = 1;
+        // Use shared_ptr so the lambda owns the state and remains valid
+        // even after ripWholeDisc() has returned (async timer callbacks).
+        auto state = std::make_shared<int>(1);
+        auto ripNext = std::make_shared<std::function<void()>>();
 
-        std::function<void()> ripNext = [this, &ripNext, outputDir, format, paranoiaLevel, &currentTrack]() {
-            while (currentTrack <= m_info.totalTracks && !m_info.tracks[currentTrack-1].isAudio) {
-                currentTrack++;
+        *ripNext = [this, ripNext, state, outputDir, format, paranoiaLevel]() {
+            // Skip non-audio tracks
+            while (*state <= m_info.totalTracks && !m_info.tracks[*state - 1].isAudio) {
+                (*state)++;
             }
 
-            if (currentTrack > m_info.totalTracks) {
+            if (*state > m_info.totalTracks) {
                 emit operationProgress("All tracks ripped successfully", 100);
                 return;
             }
 
+            int trackNum = *state;
+            QString title = m_info.tracks[trackNum - 1].title.isEmpty()
+                            ? QString("Track %1").arg(trackNum)
+                            : m_info.tracks[trackNum - 1].title;
+
             QString filename = QString("%1/%2 - %3.%4")
-            .arg(outputDir)
-            .arg(currentTrack, 2, 10, QChar('0'))
-            .arg(m_info.tracks[currentTrack-1].title.isEmpty() ?
-            QString("Track %1").arg(currentTrack) :
-            m_info.tracks[currentTrack-1].title)
-            .arg(format);
+                               .arg(outputDir)
+                               .arg(trackNum, 2, 10, QChar('0'))
+                               .arg(title)
+                               .arg(format);
 
-            ripTrack(currentTrack, filename, paranoiaLevel, format);
+            ripTrack(trackNum, filename, paranoiaLevel, format);
 
-            // Connect to progress to chain next rip
+            // Chain next rip when this track reaches 100%
             connect(this, &Disc::ripProgress, this,
-                    [this, &ripNext, currentTrack](int track, int percent) {
-                        if (percent >= 100 && track == currentTrack) {
+                    [this, ripNext, state, trackNum](int track, int percent) {
+                        if (percent >= 100 && track == trackNum) {
                             disconnect(this, &Disc::ripProgress, nullptr, nullptr);
-                            currentTrack++;
-                            QTimer::singleShot(100, &ripNext);
+                            (*state)++;
+                            // Capture ripNext by value so the shared_ptr keeps the
+                            // lambda alive until QTimer fires the callback.
+                            QTimer::singleShot(100, this, [ripNext]() {
+                                (*ripNext)();
+                            });
                         }
                     }, Qt::SingleShotConnection);
         };
 
-        ripNext();
+        (*ripNext)();
     }
 
     /**
@@ -927,157 +795,56 @@ namespace Aegis {
         QString url = QString("https://musicbrainz.org/ws/2/discid/%1?fmt=json").arg(m_info.discId);
 
         QNetworkRequest request(url);
-        request.setRawHeader("User-Agent", "AegisMediaPlayer/1.0");
-        request.setRawHeader("Accept", "application/json");
+        request.setRawHeader("User-Agent", "AegisMediaPlayer/1.0 (https://github.com/aegis)");
 
         QNetworkReply *reply = nam->get(request);
-
         connect(reply, &QNetworkReply::finished, this, [this, reply, nam]() {
-            if (reply->error() == QNetworkReply::NoError) {
-                QByteArray data = reply->readAll();
-                QJsonDocument doc = QJsonDocument::fromJson(data);
-
-                if (!doc.isNull() && doc.isObject()) {
-                    QJsonObject root = doc.object();
-                    QJsonArray releases = root["releases"].toArray();
-
-                    if (!releases.isEmpty()) {
-                        QJsonObject release = releases.first().toObject();
-
-                        // Update disc info with MusicBrainz data
-                        m_info.title = release["title"].toString();
-
-                        QJsonArray artists = release["artist-credit"].toArray();
-                        if (!artists.isEmpty()) {
-                            QJsonObject artist = artists.first().toObject();
-                            m_info.artist = artist["name"].toString();
-                        }
-
-                        // Update track metadata
-                        QJsonArray media = release["media"].toArray();
-                        if (!media.isEmpty()) {
-                            QJsonObject medium = media.first().toObject();
-                            QJsonArray tracks = medium["tracks"].toArray();
-
-                            for (int i = 0; i < qMin(tracks.size(), m_info.tracks.size()); ++i) {
-                                QJsonObject track = tracks[i].toObject();
-                                m_info.tracks[i].title = track["title"].toString();
-
-                                QJsonArray trackArtists = track["artist-credit"].toArray();
-                                if (!trackArtists.isEmpty()) {
-                                    QJsonObject trackArtist = trackArtists.first().toObject();
-                                    m_info.tracks[i].artist = trackArtist["name"].toString();
-                                }
-                            }
-                        }
-
-                        emit discChanged();
-                        emit musicBrainzMetadataFetched(true);
-                        qDebug() << "MusicBrainz metadata fetched:" << m_info.artist << "-" << m_info.title;
-                    }
-                }
-            } else {
-                emit error("MusicBrainz lookup failed: " + reply->errorString());
-                emit musicBrainzMetadataFetched(false);
-            }
-
             reply->deleteLater();
             nam->deleteLater();
+
+            if (reply->error() != QNetworkReply::NoError) {
+                emit error("MusicBrainz lookup failed: " + reply->errorString());
+                return;
+            }
+
+            QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+            if (doc.isNull()) {
+                emit error("Invalid MusicBrainz response");
+                return;
+            }
+
+            emit metadataFetched(doc.object().toVariantMap());
         });
     }
 
-    /**
-     * @brief Get tracks in QML-compatible format
-     * @return List of track information
-     */
-    QVariantList Disc::tracks() const
-    {
-        QVariantList list;
-
-        for (const auto &track : m_info.tracks) {
-            QVariantMap map;
-            map["number"] = track.number;
-            map["title"] = track.title.isEmpty() ?
-            QString("Track %1").arg(track.number) : track.title;
-            map["artist"] = track.artist;
-            map["duration"] = track.duration;
-            map["isAudio"] = track.isAudio;
-            map["format"] = track.format;
-            map["startFrame"] = track.startFrame;
-            map["endFrame"] = track.endFrame;
-            map["isrc"] = track.isrc;
-
-            list.append(map);
-        }
-
-        return list;
-    }
-
-    /**
-     * @brief Get disc titles (for DVD/Blu-ray)
-     * @return List of title information
-     */
-    QVariantList Disc::discTitles() const
-    {
-        QVariantList titles;
-
-        // Simple implementation - in production would use libdvdread/libbluray
-        if (isDVDVideo() || isBluRay()) {
-            QVariantMap title;
-            title["number"] = 1;
-            title["chapters"] = 1;
-            title["duration"] = 0;
-            title["angleCount"] = 1;
-            titles.append(title);
-        }
-
-        return titles;
-    }
-
-    /**
-     * @brief Get disc type as string
-     * @return Human-readable disc type
-     */
-    QString Disc::discTypeString() const
+    QString Disc::discType() const
     {
         switch (m_info.discType) {
-            case CDIO_DISC_MODE_CD_DA: return "Audio CD";
-            case CDIO_DISC_MODE_DVD_ROM: return "DVD-ROM";
-            case CDIO_DISC_MODE_DVD_VIDEO: return "DVD-Video";
-            case CDIO_DISC_MODE_BD: return "Blu-ray";
-            case CDIO_DISC_MODE_CD_XA: return "CD-ROM XA";
-            default: return "Data Disc";
+            case CDIO_DISC_MODE_CD_DA:    return "Audio CD";
+            case CDIO_DISC_MODE_DVD_ROM:  return "DVD-ROM";
+            case CDIO_DISC_MODE_DVD_VIDEO:return "DVD-Video";
+            case CDIO_DISC_MODE_BD:       return "Blu-ray";
+            case CDIO_DISC_MODE_CD_XA:    return "CD-ROM XA";
+            default:                      return "Data Disc";
         }
     }
 
-    /**
-     * @brief Check drive feature support
-     * @param feature Feature name
-     * @return True if feature supported
-     */
     bool Disc::driveSupports(const QString &feature) const
     {
-        // Basic implementation - would use ioctl or libcdio in production
-        if (feature == "cdda") return true;
-        if (feature == "dvd") return m_device.contains("dvd", Qt::CaseInsensitive);
-        if (feature == "bluray") return m_device.contains("bd", Qt::CaseInsensitive);
-        if (feature == "burning") return false; // Would require CD burning support
-
+        if (feature == "cdda")   return true;
+        if (feature == "dvd")    return m_device.contains("dvd", Qt::CaseInsensitive);
+        if (feature == "bluray") return m_device.contains("bd",  Qt::CaseInsensitive);
+        if (feature == "burning")return false;
         return false;
     }
 
     // ================ Private Helper Methods ================
 
-    /**
-     * @brief Find default optical drive
-     * @return Device path or empty string
-     */
     QString Disc::findDefaultDrive() const
     {
-        // Common Linux device paths
         QStringList candidates = {
             "/dev/sr0", "/dev/cdrom", "/dev/dvd", "/dev/sr1",
-            "/dev/cdrom1", "/dev/dvd1", "/dev/disk/by-id/*"
+            "/dev/cdrom1", "/dev/dvd1"
         };
 
         for (const QString &candidate : candidates) {
@@ -1086,7 +853,6 @@ namespace Aegis {
             }
         }
 
-        // Try to find via libcdio
         char **drives = cdio_get_devices(DRIVER_DEVICE);
         if (drives && drives[0]) {
             QString device = QString::fromUtf8(drives[0]);
@@ -1097,9 +863,6 @@ namespace Aegis {
         return QString();
     }
 
-    /**
-     * @brief Clean up worker thread
-     */
     void Disc::cleanupWorker()
     {
         if (m_worker) {
@@ -1113,15 +876,10 @@ namespace Aegis {
         }
     }
 
-    /**
-     * @brief Update disc information cache
-     * @param info New disc information
-     */
     void Disc::updateDiscInfo(const DiscInfo &info)
     {
         m_info = info;
 
-        // If we have tracks but no title, create a default title
         if (m_info.title.isEmpty() && m_info.totalTracks > 0) {
             if (m_info.artist.isEmpty()) {
                 m_info.title = QString("Unknown Album (%1 Tracks)").arg(m_info.totalTracks);

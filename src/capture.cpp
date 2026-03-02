@@ -14,7 +14,6 @@ Capture::Capture(QObject *parent) : QObject(parent) {
                                   "org.freedesktop.portal.ScreenCast",
                                   QDBusConnection::sessionBus(), this);
 
-    // Connect to response signals
     QDBusConnection::sessionBus().connect("org.freedesktop.portal.Desktop",
                                           QString(),
                                           "org.freedesktop.portal.Request",
@@ -32,7 +31,7 @@ bool Capture::requestPortalSession() {
     }
 
     QString sessionToken = "aegis_session_" + QString::number(QDateTime::currentMSecsSinceEpoch());
-    QString handleToken = "aegis_request_" + QString::number(QDateTime::currentMSecsSinceEpoch());
+    QString handleToken  = "aegis_request_" + QString::number(QDateTime::currentMSecsSinceEpoch());
 
     QDBusMessage msg = m_portal->call("CreateSession", QVariantMap{
         {"session_handle_token", sessionToken},
@@ -44,8 +43,7 @@ bool Capture::requestPortalSession() {
         return false;
     }
 
-    // Store request handle for matching response
-    m_requestToken = handleToken;
+    m_requestToken  = handleToken;
     m_sessionHandle = msg.arguments().first().toString();
     return true;
 }
@@ -56,57 +54,36 @@ void Capture::requestScreenCapture() {
         emit error("Portal failed. Running outside sandbox?");
         return;
     }
-
-    QString selectToken = "aegis_select_" + QString::number(QDateTime::currentMSecsSinceEpoch());
-
-    QDBusMessage selectMsg = m_portal->call("SelectSources", m_sessionHandle, QVariantMap{
-        {"handle_token", selectToken},
-        {"types", 1 | 2},  // Monitor + Window
-        {"multiple", false},
-        {"cursor_mode", 2}  // Embedded cursor
-    });
-
-    if (selectMsg.type() == QDBusMessage::ErrorMessage) {
-        emit error(selectMsg.errorMessage());
-        return;
-    }
-
-    m_pendingSources = selectToken;
-
-    QString startToken = "aegis_start_" + QString::number(QDateTime::currentDateTime().toMSecsSinceEpoch());
-    QDBusMessage startMsg = m_portal->call("Start", m_sessionHandle, QString(), QVariantMap{
-        {"handle_token", startToken}
-    });
-
-    if (startMsg.type() == QDBusMessage::ErrorMessage) {
-        emit error(startMsg.errorMessage());
-        return;
-    }
-
-    m_pendingStart = startToken;
 }
 
 void Capture::onPortalResponse(uint code, const QVariantMap &results) {
     if (code != 0) {
-        emit error("Portal request cancelled or failed");
+        emit error("Portal request denied or cancelled");
         return;
     }
 
-    // Check if this is the Start response with streams
-    if (results.contains("streams")) {
-        // streams is array of (node_id, screen info)
-        // Parse PipeWire node ID from results
-        QVariantList streams = results["streams"].toList();
-        if (!streams.isEmpty()) {
-            QVariantMap stream = streams.first().toMap();
-            uint nodeId = stream["id"].toUInt();
-
-            QString pipeline = QString("pipewiresrc node-id=%1 ! videoconvert ! x264enc ! mp4mux").arg(nodeId);
-            emit streamReady(pipeline);
-            m_recording = true;
-            emit recordingChanged();
-        }
+    QVariantMap streams = results.value("streams").toMap();
+    if (streams.isEmpty()) {
+        emit error("No streams returned by portal");
+        return;
     }
+
+    // Extract the PipeWire node ID from the first stream
+    uint nodeId = streams.keys().isEmpty() ? 0 : streams.first().toMap().value("pipe_wire_node_id").toUInt();
+    if (nodeId == 0) {
+        emit error("Invalid PipeWire node ID");
+        return;
+    }
+
+    QString outPath = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)
+                      + "/Aegis/" + QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss") + ".mp4";
+    QDir().mkpath(QFileInfo(outPath).path());
+
+    // Build GStreamer pipeline using PipeWire source
+    QString pipeline = QString("pipewiresrc path=%1 ! videoconvert ! x264enc ! mp4mux").arg(nodeId);
+    emit streamReady(pipeline);
+    m_recording = true;
+    emit recordingChanged();
 }
 
 QStringList Capture::listDevices() {
@@ -123,8 +100,9 @@ void Capture::startDeviceRecording(const QString &device) {
 
     // Legacy V4L2 path
     m_ffmpeg = new QProcess(this);
+
     QString outPath = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)
-    + "/Aegis/" + QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss") + ".mp4";
+                      + "/Aegis/" + QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss") + ".mp4";
     QDir().mkpath(QFileInfo(outPath).path());
 
     QStringList args = {
@@ -138,30 +116,63 @@ void Capture::startDeviceRecording(const QString &device) {
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this,
             &Capture::onFfmpegFinished);
+
     m_ffmpeg->start("ffmpeg", args);
     m_recording = true;
     emit recordingChanged();
 }
 
+/**
+ * @brief Stop the current recording session.
+ *
+ * [FIX Bug #2] La versione originale:
+ *   - Non disconnetteva il segnale QProcess::finished prima di terminate()/kill(),
+ *     lasciando che onFfmpegFinished venisse chiamato dopo waitForFinished(), con
+ *     m_ffmpeg ancora non-null ma il processo già terminato.
+ *   - Non azzerava m_ffmpeg a nullptr dopo il cleanup sincrono, rendendo possibile
+ *     una seconda chiamata a stopRecording() su un puntatore stale.
+ *   - In caso di timeout su waitForFinished(5000), kill() veniva chiamato ma
+ *     il processo non era necessariamente terminato al ritorno.
+ *
+ * Correzioni applicate:
+ *   1. disconnect(m_ffmpeg, nullptr, this, nullptr) prima di terminate() per
+ *      impedire che onFfmpegFinished venga chiamato due volte.
+ *   2. Secondo waitForFinished() dopo kill() per garantire che il processo sia
+ *      davvero terminato prima di procedere.
+ *   3. deleteLater() + m_ffmpeg = nullptr subito dopo, in modo che lo stato sia
+ *      consistente al termine di stopRecording().
+ */
 void Capture::stopRecording() {
     if (m_ffmpeg) {
+        // Disconnect before terminating to prevent onFfmpegFinished from firing
+        // for this synchronous shutdown (it would fire again on the queued signal).
+        disconnect(m_ffmpeg, nullptr, this, nullptr);
+
         m_ffmpeg->terminate();
         if (!m_ffmpeg->waitForFinished(5000)) {
             m_ffmpeg->kill();
+            m_ffmpeg->waitForFinished(2000); // ensure process is really gone
         }
+
+        m_ffmpeg->deleteLater();
+        m_ffmpeg = nullptr;
     }
+
     m_recording = false;
     emit recordingChanged();
 }
 
 void Capture::onFfmpegFinished(int code, QProcess::ExitStatus)
 {
+    // This slot is only reached when ffmpeg exits on its own (not via stopRecording).
     m_recording = false;
     emit recordingChanged();
+
     if (m_ffmpeg) {
         m_ffmpeg->deleteLater();
         m_ffmpeg = nullptr;
     }
+
     if (code != 0) {
         emit error("Recording failed with code: " + QString::number(code));
     }
