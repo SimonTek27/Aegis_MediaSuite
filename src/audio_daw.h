@@ -345,6 +345,9 @@ namespace Aegis {
         Note* noteAtTick(int tick, int voice = 0);
         QVector<Note*> notesInRange(int startTick, int endTick, int voice = -1);
 
+        void addTimeSignature(const TimeSignature& ts);
+        const QVector<TimeSignature>& timeSignatures() const;
+
         int tickToPixel(int tick) const;
         int pixelToTick(double x) const;
         int filledTicks() const;
@@ -400,8 +403,8 @@ namespace Aegis {
         void setTranspose(int chromatic, int diatonic);
 
         // Usa std::vector per unique_ptr
-        const std::vector<std::unique_ptr<Measure>>& measures() const { return d->measures; }
-        std::vector<std::unique_ptr<Measure>>& measures() { return d->measures; }
+        const std::vector<std::unique_ptr<Measure>>& measures() const;
+        std::vector<std::unique_ptr<Measure>>& measures();
 
         Measure* addMeasure(int number);
         void removeMeasure(int index);
@@ -447,8 +450,8 @@ namespace Aegis {
         void setCopyright(const QString& copy);
 
         // Usa std::vector per unique_ptr
-        const std::vector<std::unique_ptr<Staff>>& staves() const { return d->staves; }
-        std::vector<std::unique_ptr<Staff>>& staves() { return d->staves; }
+        const std::vector<std::unique_ptr<Staff>>& staves() const;
+        std::vector<std::unique_ptr<Staff>>& staves();
 
         Staff* addStaff(const QString& name);
         void removeStaff(int index);

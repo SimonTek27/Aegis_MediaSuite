@@ -4,6 +4,7 @@
 #pragma once
 
 #include "audio_daw.h"
+#include "audio_effects.h"  // required for EffectChain
 #include <QObject>
 #include <QVector>
 #include <QString>
@@ -340,14 +341,14 @@ namespace Aegis {
     };
 
     // =============================================================================
-    // ModTrackerPlayback - Internal playback engine (used by ModTrackerClip)
+    // ModTrackerClipPlayback - Internal playback engine (used by ModTrackerClip)
     // =============================================================================
 
-    class ModTrackerPlayback : public QObject {
+    class ModTrackerClipPlayback : public QObject {
         Q_OBJECT
     public:
-        explicit ModTrackerPlayback(QObject* parent = nullptr);
-        ~ModTrackerPlayback();
+        explicit ModTrackerClipPlayback(QObject* parent = nullptr);
+        ~ModTrackerClipPlayback();
 
         void setModule(TrackerModule* module);
         void setSampleRate(int rate) { m_sampleRate = rate; }

@@ -1,6 +1,6 @@
 // modtracker.cpp - Fully Integrated MOD Tracker Implementation
 
-#include "modtracker.h"
+#include "audio_modtracker.h"
 #include <QFile>
 #include <QFileInfo>
 #include <algorithm>
@@ -983,16 +983,16 @@ namespace Aegis {
                                       }
 
                                       // =============================================================================
-                                      // ModTrackerPlayback Implementation (Internal Synthesis)
+                                      // ModTrackerClipPlayback Implementation (Internal Synthesis)
                                       // =============================================================================
 
-                                      ModTrackerPlayback::ModTrackerPlayback(QObject* parent)
+                                      ModTrackerClipPlayback::ModTrackerClipPlayback(QObject* parent)
                                       : QObject(parent) {
                                       }
 
-                                      ModTrackerPlayback::~ModTrackerPlayback() = default;
+                                      ModTrackerClipPlayback::~ModTrackerClipPlayback() = default;
 
-                                      void ModTrackerPlayback::setModule(TrackerModule* module) {
+                                      void ModTrackerClipPlayback::setModule(TrackerModule* module) {
                                           m_module = module;
                                           if (module) {
                                               m_currentSpeed = module->defaultSpeed;
@@ -1001,19 +1001,19 @@ namespace Aegis {
                                           }
                                       }
 
-                                      void ModTrackerPlayback::setPosition(int pattern, int row) {
+                                      void ModTrackerClipPlayback::setPosition(int pattern, int row) {
                                           m_currentPattern = pattern;
                                           m_currentRow = row;
                                           m_rowProgress = 0.0;
                                           m_tickCounter = 0;
                                       }
 
-                                      void ModTrackerPlayback::getPosition(int& pattern, int& row) const {
+                                      void ModTrackerClipPlayback::getPosition(int& pattern, int& row) const {
                                           pattern = m_currentPattern;
                                           row = m_currentRow;
                                       }
 
-                                      void ModTrackerPlayback::render(int frames, float* buffer, int channels) {
+                                      void ModTrackerClipPlayback::render(int frames, float* buffer, int channels) {
                                           if (!m_module || !m_playing) {
                                               std::fill(buffer, buffer + frames * channels, 0.0f);
                                               return;
@@ -1058,7 +1058,7 @@ namespace Aegis {
                                           }
                                       }
 
-                                      void ModTrackerPlayback::processRow() {
+                                      void ModTrackerClipPlayback::processRow() {
                                           if (!m_module) return;
                                           if (m_currentPattern >= m_module->patterns.size()) return;
 
@@ -1073,7 +1073,7 @@ namespace Aegis {
                                           m_tickCounter = 0;
                                       }
 
-                                      void ModTrackerPlayback::processChannel(int ch, const TrackerNote& note) {
+                                      void ModTrackerClipPlayback::processChannel(int ch, const TrackerNote& note) {
                                           auto& state = m_channels[ch];
 
                                           if (note.isNoteOn()) {
@@ -1103,7 +1103,7 @@ namespace Aegis {
                                           }
                                       }
 
-                                      void ModTrackerPlayback::mixChannels(int frames, float* buffer, int channels) {
+                                      void ModTrackerClipPlayback::mixChannels(int frames, float* buffer, int channels) {
                                           for (int ch = 0; ch < m_module->numChannels; ++ch) {
                                               auto& state = m_channels[ch];
                                               if (state.note == 0 || state.instrument < 0) continue;
@@ -1152,7 +1152,7 @@ namespace Aegis {
                                           }
                                       }
 
-                                      void ModTrackerPlayback::applyEffect(int ch, ChannelState& state) {
+                                      void ModTrackerClipPlayback::applyEffect(int ch, ChannelState& state) {
                                           // Simplified effect processing
                                           switch (state.effect) {
                                               case 0x0: // Arpeggio
@@ -1186,18 +1186,18 @@ namespace Aegis {
                                           }
                                       }
 
-                                      double ModTrackerPlayback::periodToIncrement(double period, int sampleRate) const {
+                                      double ModTrackerClipPlayback::periodToIncrement(double period, int sampleRate) const {
                                           double freq = amigaPeriodToHz(period);
                                           return freq / sampleRate;
                                       }
 
-                                      void ModTrackerPlayback::updateSamplesPerRow() {
+                                      void ModTrackerClipPlayback::updateSamplesPerRow() {
                                           // ProTracker: (2.5 / BPM) * speed seconds per row
                                           double secondsPerRow = (2.5 / m_currentTempo) * m_currentSpeed;
                                           m_samplesPerRow = secondsPerRow * m_sampleRate;
                                       }
 
-                                      double ModTrackerPlayback::noteToPeriod(int note, int finetune) {
+                                      double ModTrackerClipPlayback::noteToPeriod(int note, int finetune) {
                                           return noteToAmigaPeriod(note, finetune);
                                       }
 

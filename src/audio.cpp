@@ -1,7 +1,10 @@
 // audio.cpp - Audio Engine Core Implementation
 
-#include "audio.h"
+// audio_output.h MUST be included before audio.h: audio.h forward-declares
+// AudioOutput, but unique_ptr<AudioOutput> members require the complete type
+// at the point where AudioEngine's constructor/destructor are instantiated.
 #include "audio_output.h"
+#include "audio.h"
 #include <cmath>
 #include <algorithm>
 #include <fftw3.h>
@@ -13,6 +16,10 @@
 
 #ifdef __SSE2__
 #include <emmintrin.h>
+#endif
+
+#ifdef __SSE4_1__
+#include <smmintrin.h>  // SSE4.1: _mm_blendv_ps
 #endif
 
 #ifdef __AVX2__
@@ -112,8 +119,11 @@ namespace Aegis {
         std::shared_ptr<RubberBand::RubberBandStretcher> stretcher;
 
         // Lock-free echo buffer
-        static constexpr size_t MaxEchoDelay = 48000;  // 1 second at 48kHz
-        using EchoBuffer = LockFreeRingBuffer<float, MaxEchoDelay * 2>;
+        // NOTE: LockFreeRingBuffer requires size to be a power of 2.
+        // 96000 * 2 = 192000 is not a power of 2; use 131072 (2^17) or 262144 (2^18).
+        // 131072 samples @ 48kHz ≈ 2.73s of mono delay — sufficient for echo effect.
+        static constexpr size_t MaxEchoDelay = 65536;  // 2^16, ~1.36s mono at 48kHz
+        using EchoBuffer = LockFreeRingBuffer<float, MaxEchoDelay * 2>;  // 2^17 = 131072
         EchoBuffer echoBuffer;
 
         // SIMD-aligned temporary buffers
@@ -349,7 +359,7 @@ namespace Aegis {
         if (musicVol != 1.0 || vocalVol != 0.0) {
             const int samples = frames * 2;
 
-            #ifdef __SSE2__
+            #ifdef __SSE4_1__
             const int simdSamples = samples & ~3;
 
             for (int i = 0; i < simdSamples; i += 4) {

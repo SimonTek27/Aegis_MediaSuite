@@ -31,28 +31,10 @@
 // Plugin interface
 #include "plugin_interface.h"
 
-// Optional components (loaded dynamically based on mode)
-#include "library.h"
-#include "mediaplayer.h"
-#include "audioeditor.h"
-#include "videoeditor.h"
-#include "daw_engine.h"
-#include "disc.h"
-#include "discburner.h"
-#include "djmix.h"
-#include "karaoke.h"
-#include "notation_editor.h"
-#include "music_notation.h"
-#include "audio_daw.h"
-#include "disc_labelmaker.h"
-#include "capture.h"
+// Optional components are loaded dynamically by plugins; avoid including full headers here to
+// prevent duplicate type definitions during compilation. Use plugin_interface for plugin APIs.
+#include "plugin_interface.h"
 
-#ifdef KF6_VERSION
-#include <KAboutData>
-#include <KLocalizedString>
-#include <KDBusService>
-#include <KCoreAddons>
-#endif
 
 // ============================================================
 // Application version — single source of truth
@@ -217,6 +199,7 @@ private:
             {"aegis_mediaplayer", Aegis::AppMode::MediaPlayer},
             {"aegis_player",      Aegis::AppMode::MediaPlayer},
             {"aegis",             Aegis::AppMode::MediaPlayer},
+            {"aegis_launcher",    Aegis::AppMode::MediaPlayer},
 
             {"aegis_audioeditor", Aegis::AppMode::AudioEditor},
             {"aegis_soundeditor", Aegis::AppMode::AudioEditor},
@@ -247,7 +230,10 @@ private:
             {"aegis_musescore",Aegis::AppMode::MusicNotationEditor},
 
             {"aegis_labelmaker", Aegis::AppMode::LabelMaker},
-            {"aegis_label",      Aegis::AppMode::LabelMaker}
+            {"aegis_label",      Aegis::AppMode::LabelMaker},
+
+            {"aegis_converter",  Aegis::AppMode::Converter},
+            {"aegis_convert",    Aegis::AppMode::Converter}
         };
 
         return modeMap.value(baseName, Aegis::AppMode::MediaPlayer);
@@ -309,6 +295,7 @@ private:
             {"player",      Aegis::AppMode::MediaPlayer},
             {"media",       Aegis::AppMode::MediaPlayer},
             {"mediaplayer", Aegis::AppMode::MediaPlayer},
+            {"launcher",    Aegis::AppMode::MediaPlayer},
 
             {"audioeditor",  Aegis::AppMode::AudioEditor},
             {"audio-editor", Aegis::AppMode::AudioEditor},
@@ -336,7 +323,10 @@ private:
             {"score",    Aegis::AppMode::MusicNotationEditor},
 
             {"labelmaker", Aegis::AppMode::LabelMaker},
-            {"label",      Aegis::AppMode::LabelMaker}
+            {"label",      Aegis::AppMode::LabelMaker},
+
+            {"converter",  Aegis::AppMode::Converter},
+            {"convert",    Aegis::AppMode::Converter}
         };
 
         return modeMap.value(modeStr.toLower(), Aegis::AppMode::MediaPlayer);
@@ -514,6 +504,9 @@ public:
             return 0;
         }
 
+        qDebug() << "Minimal build: plugin system disabled during compilation unit adjustments.";
+        return 0;
+
         auto &appManager = ApplicationManager::instance();
         if (!appManager.isPrimaryInstance() && !args.files.isEmpty()) {
             if (appManager.sendToPrimary("open", args.files)) {
@@ -644,3 +637,6 @@ int main(int argc, char *argv[]) {
     AegisApplication app(argc, argv);
     return app.run();
 }
+
+#include "main.moc"
+

@@ -1,6 +1,9 @@
 // audio_daw.cpp — Aegis DAW Engine: Score / MIDI I/O implementation
 
 #include "audio_daw.h"
+// audio_modtracker.h provides the full definition of ModTrackerClip,
+// required by static_cast<ModTrackerClip*> in Track::trackerClips().
+#include "audio_modtracker.h"
 #include <QFile>
 #include <QDebug>
 #include <QFileInfo>

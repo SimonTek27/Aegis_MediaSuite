@@ -1,5 +1,5 @@
 // karaoke.cpp - Karaoke implementation
-#include "karaoke.h"
+#include "audio_karaoke.h"
 #include "audio.h"
 #include "mpv_backend.h"
 #include <QDebug>

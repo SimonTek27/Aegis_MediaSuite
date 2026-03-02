@@ -1,5 +1,5 @@
 // djmix.cpp - DJ Mixer implementation using all three pillars
-#include "djmix.h"
+#include "audio_djmix.h"
 #include <QFileInfo>
 #include <QDebug>
 #include <QtMath>

@@ -21,7 +21,7 @@
 #include "capture.h"
 #include "kdeconnect.h"
 #include "platform.h"
-#include "karaoke.h"
+#include "audio_karaoke.h"
 #include "disc.h"
 #include "audioeditor.h"
 
