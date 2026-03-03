@@ -12,6 +12,7 @@ extern "C" {
 #include <libavutil/timecode.h>
 }
 
+#include <QObject>
 #include <QImage>
 #include <QString>
 #include <QMutex>

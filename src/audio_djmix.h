@@ -8,6 +8,7 @@
 #include <QReadWriteLock>
 #include <memory>
 #include <atomic>
+#include <rubberband/RubberBandStretcher.h>
 
 namespace Aegis {
 

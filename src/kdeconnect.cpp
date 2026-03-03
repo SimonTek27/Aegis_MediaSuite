@@ -6,11 +6,11 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <QDebug>
+#include <QUrl>
 
 KDEConnect::KDEConnect(QObject *parent) : QObject(parent) {
     // Register meta types for DBus
     qDBusRegisterMetaType<QMap<QString, QVariant>>();
-    qDBusRegisterMetaType<QDBusArgument>();
 
     m_daemon = new QDBusInterface("org.kde.kdeconnect.daemon",
                                   "/modules/kdeconnect",
@@ -130,9 +130,13 @@ bool KDEConnect::sendFile(const QString &filePath, const QString &deviceId) {
     QDBusReply<bool> reply = share.call("shareUrl", url.toString());
 
     if (reply.isValid() && reply.value()) {
-        QString devName = m_devices.first([targetId](const KdeConnectDevice &d) {
-            return d.id == targetId;
-        }).name;
+        QString devName = targetId;
+        for (const auto &d : m_devices) {
+            if (d.id == targetId) {
+                devName = d.name;
+                break;
+            }
+        }
         emit shareSuccess(devName);
         return true;
     } else {

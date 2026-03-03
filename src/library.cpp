@@ -8,7 +8,7 @@
 #include <QDirIterator>
 #include <QFuture>
 #include <QFutureWatcher>
-#include <QtConcurrent>
+#include <QtConcurrent/QtConcurrent>
 #include <QMutexLocker>
 #include <QDebug>
 

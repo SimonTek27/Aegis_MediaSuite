@@ -2,7 +2,7 @@
 #pragma once
 
 #include <QObject>
-#include <QQmlApplicationEngine>
+#include <QtQml/QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QVariantMap>
 #include <memory>
@@ -15,6 +15,9 @@ namespace Aegis {
 class Library;
 class Core;
 
+// Forward declaration for AppMode enum (defined in main.cpp)
+enum class AppMode;
+
 /**
  * @brief Application context passed to plugins during initialization
  */
@@ -24,6 +27,7 @@ struct AppContext {
     QVariantMap config;
     std::shared_ptr<Library> library;
     std::shared_ptr<Core> core;
+    AppMode mode;  // ADDED: Mode field (was missing but used in main.cpp)
 };
 
 /**
@@ -39,57 +43,57 @@ public:
     virtual ~AppModePlugin() = default;
 
     // ============== Required Interface ==============
-    
+
     /**
      * @brief Get the mode identifier (unique name)
      * @return Mode identifier string
      */
     virtual QString modeName() const = 0;
-    
+
     /**
      * @brief Get the human-readable display name
      * @return Display name for UI
      */
     virtual QString displayName() const = 0;
-    
+
     /**
      * @brief Get the QML entry point for this mode
      * @return QML file path or URL
      */
     virtual QString qmlEntryPoint() const = 0;
-    
+
     /**
      * @brief Initialize the plugin with application context
      * @param ctx Application context
      * @return True if initialization succeeded
      */
     virtual bool initialize(const AppContext& ctx) = 0;
-    
+
     /**
      * @brief Shutdown the plugin and cleanup resources
      */
     virtual void shutdown() = 0;
 
     // ============== Optional Interface ==============
-    
+
     /**
      * @brief Handle command line arguments
      * @param args List of arguments
      */
     virtual void handleArguments(const QStringList& args) { Q_UNUSED(args) }
-    
+
     /**
      * @brief Check if plugin supports video playback
      * @return True if video is supported
      */
     virtual bool hasVideo() const { return false; }
-    
+
     /**
      * @brief Check if plugin supports editing features
      * @return True if editing is available
      */
     virtual bool hasEditing() const { return false; }
-    
+
     /**
      * @brief Check if plugin supports recording
      * @return True if recording is supported
@@ -136,7 +140,7 @@ public:
         auto plugin = std::make_unique<PluginType>();
         m_plugins[plugin->modeName()] = std::move(plugin);
     }
-    
+
     /**
      * @brief Register a plugin instance
      * @param plugin Plugin instance to register
@@ -156,7 +160,7 @@ public:
         auto it = m_plugins.find(mode);
         return (it != m_plugins.end()) ? it->second.get() : nullptr;
     }
-    
+
     /**
      * @brief Get list of available modes
      * @return List of mode identifiers

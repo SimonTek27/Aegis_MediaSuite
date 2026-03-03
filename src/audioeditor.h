@@ -30,27 +30,6 @@ namespace Aegis {
     // ... (AudioFormat, AudioBuffer structs unchanged) ...
 
     // ============================================================================
-    // Selection Range
-    // ============================================================================
-
-    struct Selection {
-        qint64 start = 0;
-        qint64 end = 0;
-
-        bool isValid() const { return start >= 0 && end >= start; }
-        bool isEmpty() const { return start == end; }
-        qint64 length() const { return end - start; }
-        bool contains(qint64 pos) const { return pos >= start && pos < end; }
-
-        void normalize() {
-            if (start > end) std::swap(start, end);
-            if (start < 0) start = 0;
-        }
-    };
-
-    // ... (CuePoint, EditAction structs unchanged) ...
-
-    // ============================================================================
     // Waveform Display Data
     // ============================================================================
 
@@ -219,5 +198,3 @@ namespace Aegis {
 
 } // namespace Aegis
 
-Q_DECLARE_METATYPE(Aegis::AudioFormat)
-Q_DECLARE_METATYPE(Aegis::Selection)

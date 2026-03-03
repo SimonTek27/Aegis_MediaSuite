@@ -1,14 +1,22 @@
 // video_output.cpp - Video output implementation with PTS audio synchronization
+// Part of Aegis Multimedia Suite
+//
+// CORRELATION NOTES:
+// - Implements video_output.h interfaces
+// - Provides OpenGL rendering with proper context management
+// - Used by VideoEditor for frame presentation
+//
+
 #include "video_output.h"
-#include "audio_output.h"  // For audio clock sync
+#include "audio_output.h"
 #include <QDebug>
 #include <QThread>
 #include <QElapsedTimer>
 #include <QtMath>
-
-// Qt Multimedia includes
-#include <QVideoSink>
-#include <QVideoFrame>
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
+#include <stdexcept>
 
 namespace Aegis {
 
@@ -23,7 +31,6 @@ namespace Aegis {
     void VideoOutput::setAudioOutput(AudioOutput* audio) {
         m_audioOutput = audio;
         if (audio) {
-            // Connect to audio output state changes
             connect(audio, &QObject::destroyed, this, [this]() {
                 m_audioOutput = nullptr;
             });
@@ -35,10 +42,8 @@ namespace Aegis {
     }
 
     qint64 VideoOutput::currentMasterClock() const {
-        if (m_masterClock) {
+        if (m_masterClock)
             return m_masterClock();
-        }
-        // Fallback to system clock
         return QDateTime::currentMSecsSinceEpoch() * 1000;
     }
 
@@ -51,25 +56,21 @@ namespace Aegis {
     }
 
     bool VideoOutput::shouldDisplayFrame(const VideoPTS& videoPts, qint64 audioPts) {
-        if (!m_audioSyncEnabled || audioPts < 0) {
-            return true; // No sync, display immediately
-        }
+        if (!m_audioSyncEnabled || audioPts < 0)
+            return true;
 
-        // Calculate time difference between video and audio
         qint64 videoTime = videoPts.pts + m_videoLatency.load();
-        qint64 audioTime = audioPts + m_audioLatency.load();
-        qint64 diff = videoTime - audioTime; // Positive = video ahead
+        qint64 audioTime = audioPts    + m_audioLatency.load();
+        qint64 diff      = videoTime  - audioTime;  // positive = video ahead
 
-        // Thresholds in microseconds
-        const qint64 EARLY_THRESHOLD = -40000;  // 40ms early - wait
-        const qint64 LATE_THRESHOLD = 80000;    // 80ms late - drop
+        const qint64 EARLY_THRESHOLD = -40000;   // 40 ms early  → wait
+        const qint64 LATE_THRESHOLD  =  80000;   // 80 ms late   → drop
 
         if (diff < EARLY_THRESHOLD) {
-            // Video is too early, should wait
             emit syncStatus("early");
             return false;
-        } else if (diff > LATE_THRESHOLD) {
-            // Video is too late, drop frame
+        }
+        if (diff > LATE_THRESHOLD) {
             emit syncStatus("late");
             handleFrameDrop(videoPts);
             return false;
@@ -81,13 +82,9 @@ namespace Aegis {
 
     qint64 VideoOutput::calculateDelay(const VideoPTS& videoPts, qint64 audioPts) {
         if (!m_audioSyncEnabled) return 0;
-
         qint64 videoTime = videoPts.pts + m_videoLatency.load();
-        qint64 audioTime = audioPts + m_audioLatency.load();
-        qint64 diff = videoTime - audioTime;
-
-        // Return delay needed (negative = wait, positive = late)
-        return -diff;
+        qint64 audioTime = audioPts    + m_audioLatency.load();
+        return -(videoTime - audioTime);
     }
 
     void VideoOutput::handleFrameDrop(const VideoPTS& pts) {
@@ -102,7 +99,8 @@ namespace Aegis {
     OpenGLVideoOutput::OpenGLVideoOutput(QOpenGLContext* context, QObject* parent)
     : VideoOutput(parent)
     , m_context(context)
-    , m_ownContext(context == nullptr) {}
+    , m_ownContext(context == nullptr)
+    {}
 
     OpenGLVideoOutput::~OpenGLVideoOutput() {
         shutdown();
@@ -110,36 +108,86 @@ namespace Aegis {
 
     bool OpenGLVideoOutput::initialize(const QSize& resolution, VideoBackend backend) {
         Q_UNUSED(backend)
-
         if (m_initialized) return true;
 
-        // Create OpenGL context if not provided
-        if (!m_context) {
-            m_context = new QOpenGLContext(this);
-            QSurfaceFormat format;
-            format.setRenderableType(QSurfaceFormat::OpenGL);
-            format.setProfile(QSurfaceFormat::CoreProfile);
-            format.setVersion(3, 3);
-            format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
-            m_context->setFormat(format);
-            if (!m_context->create()) {
-                emit error("Failed to create OpenGL context");
+        try {
+            // [Fix #4] Create context + offscreen surface
+            if (!m_context) {
+                m_context = new QOpenGLContext(this);
+                QSurfaceFormat format;
+                format.setRenderableType(QSurfaceFormat::OpenGL);
+                format.setProfile(QSurfaceFormat::CoreProfile);
+                format.setVersion(3, 3);
+                format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
+                format.setDepthBufferSize(24);
+                format.setStencilBufferSize(8);
+                m_context->setFormat(format);
+
+                if (!m_context->create()) {
+                    emit error("Failed to create OpenGL context");
+                    return false;
+                }
+            }
+
+            // A freshly created context has no surface; attach an offscreen one
+            if (!m_context->surface()) {
+                m_offscreenSurface = new QOffscreenSurface();
+                m_offscreenSurface->setFormat(m_context->format());
+                m_offscreenSurface->create();
+
+                if (!m_offscreenSurface->isValid()) {
+                    emit error("Failed to create offscreen surface");
+                    delete m_offscreenSurface;
+                    m_offscreenSurface = nullptr;
+                    return false;
+                }
+            }
+
+            QSurface* surface = m_offscreenSurface
+            ? static_cast<QSurface*>(m_offscreenSurface)
+            : m_context->surface();
+
+            if (!m_context->makeCurrent(surface)) {
+                emit error("Failed to make OpenGL context current");
                 return false;
             }
-        }
 
-        // Make context current
-        if (!m_context->makeCurrent(m_context->surface())) {
-            emit error("Failed to make OpenGL context current");
+            if (!initializeOpenGLFunctions()) {
+                emit error("Failed to initialize OpenGL functions");
+                m_context->doneCurrent();
+                return false;
+            }
+
+            initializeGL();
+            setResolution(resolution);
+            m_initialized = true;
+
+            m_context->doneCurrent();
+            return true;
+
+        } catch (const std::exception& e) {
+            emit error(QString("OpenGL initialization exception: %1").arg(e.what()));
             return false;
         }
+    }
 
-        initializeOpenGLFunctions();
-        initializeGL();
+    void OpenGLVideoOutput::makeCurrent() {
+        if (!m_context) return;
 
-        setResolution(resolution);
-        m_initialized = true;
-        return true;
+        QSurface* surf = m_offscreenSurface
+        ? static_cast<QSurface*>(m_offscreenSurface)
+        : m_context->surface();
+
+        if (!surf || !surf->isValid()) {
+            qWarning() << "OpenGLVideoOutput: Invalid surface for makeCurrent";
+            return;
+        }
+
+        m_context->makeCurrent(surf);
+    }
+
+    void OpenGLVideoOutput::doneCurrent() {
+        if (m_context) m_context->doneCurrent();
     }
 
     void OpenGLVideoOutput::shutdown() {
@@ -156,6 +204,12 @@ namespace Aegis {
 
         doneCurrent();
 
+        if (m_offscreenSurface) {
+            m_offscreenSurface->destroy();
+            delete m_offscreenSurface;
+            m_offscreenSurface = nullptr;
+        }
+
         if (m_ownContext && m_context) {
             m_context->deleteLater();
             m_context = nullptr;
@@ -165,46 +219,63 @@ namespace Aegis {
     }
 
     void OpenGLVideoOutput::initializeGL() {
-        // Create default shader program
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         createShaderProgram();
         setupGeometry();
-
-        // Create FBO for offscreen rendering
         m_fbo = std::make_unique<QOpenGLFramebufferObject>(m_resolution);
+
+        if (!m_fbo->isValid()) {
+            qWarning() << "OpenGLVideoOutput: FBO creation failed";
+        }
     }
 
     void OpenGLVideoOutput::createShaderProgram() {
         const char* vertexShader = R"(
-        #version 330 core
-        layout(location = 0) in vec2 position;
-        layout(location = 1) in vec2 texCoord;
-        out vec2 vTexCoord;
-        void main() {
-            gl_Position = vec4(position, 0.0, 1.0);
-            vTexCoord = texCoord;
-        }
-    )";
+            #version 330 core
+            layout(location = 0) in vec2 position;
+            layout(location = 1) in vec2 texCoord;
+            out vec2 vTexCoord;
+            void main() {
+                gl_Position = vec4(position, 0.0, 1.0);
+                vTexCoord = texCoord;
+            }
+        )";
 
-    const char* fragmentShader = R"(
-        #version 330 core
-        in vec2 vTexCoord;
-        out vec4 fragColor;
-        uniform sampler2D videoTexture;
-        void main() {
-            fragColor = texture(videoTexture, vTexCoord);
-        }
-    )";
+        const char* fragmentShader = R"(
+            #version 330 core
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D videoTexture;
+            void main() {
+                fragColor = texture(videoTexture, vTexCoord);
+            }
+        )";
 
-    m_shaderProgram = std::make_unique<QOpenGLShaderProgram>();
-    m_shaderProgram->addShaderFromSourceCode(QOpenGLShader::Vertex,
-                                             m_customVertexShader.isEmpty() ? vertexShader : m_customVertexShader);
-    m_shaderProgram->addShaderFromSourceCode(QOpenGLShader::Fragment,
-                                             m_customFragmentShader.isEmpty() ? fragmentShader : m_customFragmentShader);
-    m_shaderProgram->link();
+        m_shaderProgram = std::make_unique<QOpenGLShaderProgram>();
+
+        if (!m_shaderProgram->addShaderFromSourceCode(
+            QOpenGLShader::Vertex,
+            m_customVertexShader.isEmpty() ? vertexShader : m_customVertexShader)) {
+            qWarning() << "OpenGLVideoOutput: Vertex shader compilation failed";
+            }
+
+            if (!m_shaderProgram->addShaderFromSourceCode(
+                QOpenGLShader::Fragment,
+                m_customFragmentShader.isEmpty() ? fragmentShader : m_customFragmentShader)) {
+                qWarning() << "OpenGLVideoOutput: Fragment shader compilation failed";
+                }
+
+                if (!m_shaderProgram->link()) {
+                    qWarning() << "OpenGLVideoOutput: Shader program linking failed";
+                }
+
+                m_shadersDirty = false;
     }
 
     void OpenGLVideoOutput::setupGeometry() {
-        // Full-screen quad
         float vertices[] = {
             // Position    // TexCoord
             -1.0f, -1.0f,  0.0f, 1.0f,
@@ -212,11 +283,13 @@ namespace Aegis {
             1.0f,  1.0f,  1.0f, 0.0f,
             -1.0f,  1.0f,  0.0f, 0.0f
         };
-
         unsigned int indices[] = {0, 1, 2, 0, 2, 3};
 
         m_vao = std::make_unique<QOpenGLVertexArrayObject>();
-        m_vao->create();
+        if (!m_vao->create()) {
+            qWarning() << "OpenGLVideoOutput: VAO creation failed";
+            return;
+        }
         m_vao->bind();
 
         m_vbo = std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::VertexBuffer);
@@ -238,79 +311,87 @@ namespace Aegis {
     }
 
     void OpenGLVideoOutput::presentFrame(const VideoFrame& frame) {
-        // Get current audio PTS if available
-        qint64 audioPts = -1;
-        if (m_audioOutput) {
-            // Query audio output for current presentation time
-            // This would be implemented in AudioOutput
-            audioPts = QDateTime::currentMSecsSinceEpoch() * 1000; // Placeholder
-        }
-
+        qint64 audioPts = m_audioOutput
+        ? QDateTime::currentMSecsSinceEpoch() * 1000   // placeholder
+        : -1;
         presentFrameWithSync(frame, audioPts);
     }
 
     void OpenGLVideoOutput::presentFrameWithSync(const VideoFrame& frame, qint64 audioPts) {
         if (!m_initialized) return;
+        if (!shouldDisplayFrame(frame.pts, audioPts)) return;
 
-        // Check if we should display this frame based on sync
-        if (!shouldDisplayFrame(frame.pts, audioPts)) {
-            return;
-        }
+        makeCurrent();
 
         QMutexLocker locker(&m_frameMutex);
         m_currentFrame = frame;
-
-        // Upload texture if needed
         uploadFrame(frame);
-
-        // Render to FBO
         renderFrame();
+
+        doneCurrent();
 
         m_framesDisplayed++;
         emit framePresented(frame.pts);
     }
 
+    // [Fix #5] Always call setData when image is non-null
     void OpenGLVideoOutput::uploadFrame(const VideoFrame& frame) {
-        if (!m_videoTexture ||
-            m_videoTexture->width() != frame.image.width() ||
-            m_videoTexture->height() != frame.image.height()) {
+        if (frame.image.isNull()) {
+            qWarning() << "OpenGLVideoOutput: Attempt to upload null image";
+            return;
+        }
 
+        bool needsAlloc = !m_videoTexture
+        || m_videoTexture->width()  != frame.image.width()
+        || m_videoTexture->height() != frame.image.height();
+
+        if (needsAlloc) {
             m_videoTexture = std::make_unique<QOpenGLTexture>(QOpenGLTexture::Target2D);
-        m_videoTexture->setMinificationFilter(QOpenGLTexture::Linear);
-        m_videoTexture->setMagnificationFilter(QOpenGLTexture::Linear);
-        m_videoTexture->setWrapMode(QOpenGLTexture::ClampToEdge);
-        m_videoTexture->setSize(frame.image.width(), frame.image.height());
-        m_videoTexture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-        m_videoTexture->allocateStorage();
-            }
+            m_videoTexture->setMinificationFilter(QOpenGLTexture::Linear);
+            m_videoTexture->setMagnificationFilter(QOpenGLTexture::Linear);
+            m_videoTexture->setWrapMode(QOpenGLTexture::ClampToEdge);
+            m_videoTexture->setSize(frame.image.width(), frame.image.height());
+            m_videoTexture->setFormat(QOpenGLTexture::RGBA8_UNorm);
+            m_videoTexture->allocateStorage();
+        }
 
-            if (!frame.image.isNull()) {
-                QImage glImage = frame.image.convertToFormat(QImage::Format_RGBA8888);
-                m_videoTexture->bind();
-                m_videoTexture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, glImage.constBits());
-            }
+        // [Fix #5] Always upload pixel data (even when texture object was reused)
+        QImage glImage = frame.image.convertToFormat(QImage::Format_RGBA8888);
+        m_videoTexture->bind();
+        m_videoTexture->setData(0,
+                                QOpenGLTexture::RGBA,
+                                QOpenGLTexture::UInt8,
+                                glImage.constBits());
     }
 
     void OpenGLVideoOutput::renderFrame() {
-        if (!m_fbo || !m_shaderProgram) return;
+        if (!m_fbo || !m_fbo->isValid() || !m_shaderProgram) {
+            qWarning() << "OpenGLVideoOutput: Invalid state for rendering";
+            return;
+        }
 
-        m_fbo->bind();
+        if (!m_fbo->bind()) {
+            qWarning() << "OpenGLVideoOutput: Failed to bind FBO";
+            return;
+        }
 
+        glViewport(0, 0, m_resolution.width(), m_resolution.height());
         glClear(GL_COLOR_BUFFER_BIT);
 
         m_shaderProgram->bind();
         m_vao->bind();
 
-        if (m_videoTexture) {
+        if (m_videoTexture && m_videoTexture->isCreated()) {
             m_videoTexture->bind(0);
             m_shaderProgram->setUniformValue("videoTexture", 0);
+        } else {
+            qWarning() << "OpenGLVideoOutput: No valid texture to render";
         }
 
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
 
         m_vao->release();
         m_shaderProgram->release();
-
         m_fbo->release();
 
         emit frameRendered(m_fbo->texture(), m_resolution);
@@ -320,173 +401,144 @@ namespace Aegis {
         if (m_resolution == res) return;
         m_resolution = res;
 
+        makeCurrent();
+
         if (m_fbo) {
             m_fbo.reset();
             m_fbo = std::make_unique<QOpenGLFramebufferObject>(m_resolution);
         }
 
+        doneCurrent();
         emit resolutionChanged(res);
     }
 
     void OpenGLVideoOutput::setVsyncEnabled(bool enabled) {
         m_vsyncEnabled = enabled;
-        // Implementation depends on platform-specific swap control
         emit vsyncEnabledChanged(enabled);
     }
 
-    void OpenGLVideoOutput::setEffectShader(const QString& vertexShader, const QString& fragmentShader) {
-        m_customVertexShader = vertexShader;
+    void OpenGLVideoOutput::setEffectShader(const QString& vertexShader,
+                                            const QString& fragmentShader) {
+        m_customVertexShader   = vertexShader;
         m_customFragmentShader = fragmentShader;
         m_shadersDirty = true;
+        if (m_initialized) createShaderProgram();
+                                            }
 
-        if (m_initialized) {
-            createShaderProgram();
-        }
-    }
+                                            void OpenGLVideoOutput::clearEffectShader() {
+                                                m_customVertexShader.clear();
+                                                m_customFragmentShader.clear();
+                                                m_shadersDirty = true;
+                                                if (m_initialized) createShaderProgram();
+                                            }
 
-    void OpenGLVideoOutput::clearEffectShader() {
-        m_customVertexShader.clear();
-        m_customFragmentShader.clear();
-        m_shadersDirty = true;
+                                            QImage OpenGLVideoOutput::captureFrame() {
+                                                QMutexLocker locker(&m_frameMutex);
+                                                if (!m_fbo || !m_fbo->isValid()) return {};
+                                                return m_fbo->toImage();
+                                            }
 
-        if (m_initialized) {
-            createShaderProgram();
-        }
-    }
+                                            void OpenGLVideoOutput::bindFBO() {
+                                                if (m_fbo) m_fbo->bind();
+                                            }
 
-    QImage OpenGLVideoOutput::captureFrame() {
-        QMutexLocker locker(&m_frameMutex);
-        if (!m_fbo) return QImage();
-        return m_fbo->toImage();
-    }
+                                            void OpenGLVideoOutput::releaseFBO() {
+                                                if (m_fbo) m_fbo->release();
+                                            }
 
-    void OpenGLVideoOutput::bindFBO() {
-        if (m_fbo) m_fbo->bind();
-    }
+                                            // =============================================================================
+                                            // QtVideoOutput Implementation (PIMPL)
+                                            // =============================================================================
 
-    void OpenGLVideoOutput::releaseFBO() {
-        if (m_fbo) m_fbo->release();
-    }
+                                            class QtVideoOutput::Impl {
+                                            public:
+                                                QVideoSink* videoSink = nullptr;
+                                                QSize       resolution;
+                                                double      frameRate  = 30.0;
+                                                bool        initialized = false;
+                                            };
 
-    // =============================================================================
-    // QtVideoOutput Implementation (PIMPL)
-    // =============================================================================
+                                            QtVideoOutput::QtVideoOutput(QObject* parent)
+                                            : VideoOutput(parent)
+                                            , m_impl(std::make_unique<Impl>())
+                                            {}
 
-    class QtVideoOutput::Impl {
-    public:
-        QVideoSink* videoSink = nullptr;
-        QSize resolution;
-        double frameRate = 30.0;
-        bool initialized = false;
-    };
+                                            QtVideoOutput::~QtVideoOutput() = default;
 
-    QtVideoOutput::QtVideoOutput(QObject* parent)
-    : VideoOutput(parent)
-    , m_impl(std::make_unique<Impl>()) {}
+                                            bool QtVideoOutput::initialize(const QSize& resolution, VideoBackend backend) {
+                                                Q_UNUSED(backend)
+                                                m_impl->resolution  = resolution;
+                                                m_impl->videoSink   = new QVideoSink(this);
+                                                m_impl->initialized = true;
+                                                return true;
+                                            }
 
-    QtVideoOutput::~QtVideoOutput() = default;
+                                            void QtVideoOutput::shutdown() {
+                                                delete m_impl->videoSink;
+                                                m_impl->videoSink   = nullptr;
+                                                m_impl->initialized = false;
+                                            }
 
-    bool QtVideoOutput::initialize(const QSize& resolution, VideoBackend backend) {
-        Q_UNUSED(backend)
-        m_impl->resolution = resolution;
-        m_impl->videoSink = new QVideoSink(this);
-        m_impl->initialized = true;
-        return true;
-    }
+                                            bool   QtVideoOutput::isInitialized() const { return m_impl->initialized; }
+                                            QSize  QtVideoOutput::resolution()    const { return m_impl->resolution;  }
+                                            double QtVideoOutput::frameRate()     const { return m_impl->frameRate;   }
+                                            bool   QtVideoOutput::vsyncEnabled()  const { return true; }
 
-    void QtVideoOutput::shutdown() {
-        delete m_impl->videoSink;
-        m_impl->videoSink = nullptr;
-        m_impl->initialized = false;
-    }
+                                            void QtVideoOutput::setResolution(const QSize& res) { m_impl->resolution = res; }
+                                            void QtVideoOutput::setFrameRate(double fps)        { m_impl->frameRate  = fps; }
+                                            void QtVideoOutput::setVsyncEnabled(bool)           {}
 
-    bool QtVideoOutput::isInitialized() const {
-        return m_impl->initialized;
-    }
+                                            void QtVideoOutput::presentFrame(const VideoFrame& frame) {
+                                                if (!m_impl->videoSink || frame.image.isNull()) return;
+                                                m_impl->videoSink->setVideoFrame(QVideoFrame(frame.image));
+                                            }
 
-    void QtVideoOutput::presentFrame(const VideoFrame& frame) {
-        if (!m_impl->videoSink || frame.image.isNull()) return;
+                                            void QtVideoOutput::presentFrameWithSync(const VideoFrame& frame, qint64 audioPts) {
+                                                if (shouldDisplayFrame(frame.pts, audioPts))
+                                                    presentFrame(frame);
+                                            }
 
-        QVideoFrame qtFrame(frame.image);
-        m_impl->videoSink->setVideoFrame(qtFrame);
-    }
+                                            QImage QtVideoOutput::captureFrame() { return {}; }
 
-    void QtVideoOutput::presentFrameWithSync(const VideoFrame& frame, qint64 audioPts) {
-        // Qt Multimedia handles sync internally, but we can check
-        if (shouldDisplayFrame(frame.pts, audioPts)) {
-            presentFrame(frame);
-        }
-    }
+                                            void* QtVideoOutput::videoSink() const { return m_impl->videoSink; }
 
-    QSize QtVideoOutput::resolution() const {
-        return m_impl->resolution;
-    }
+                                            // =============================================================================
+                                            // VideoOutputFactory
+                                            // =============================================================================
 
-    void QtVideoOutput::setResolution(const QSize& res) {
-        m_impl->resolution = res;
-    }
+                                            std::unique_ptr<VideoOutput> VideoOutputFactory::create(VideoBackend backend,
+                                                                                                    QOpenGLContext* context) {
+                                                switch (backend) {
+                                                    case VideoBackend::OpenGL:
+                                                        return std::make_unique<OpenGLVideoOutput>(context);
+                                                    case VideoBackend::QtMultimedia:
+                                                        return std::make_unique<QtVideoOutput>();
+                                                    case VideoBackend::CPU:
+                                                    case VideoBackend::Null:
+                                                    default:
+                                                        return std::make_unique<QtVideoOutput>();
+                                                }
+                                                                                                    }
 
-    double QtVideoOutput::frameRate() const {
-        return m_impl->frameRate;
-    }
+                                                                                                    bool VideoOutputFactory::isBackendAvailable(VideoBackend backend) {
+                                                                                                        switch (backend) {
+                                                                                                            case VideoBackend::OpenGL:
+                                                                                                                return QOpenGLContext::openGLModuleType() != QOpenGLContext::LibGLES;
+                                                                                                            case VideoBackend::QtMultimedia:
+                                                                                                                return true;
+                                                                                                            default:
+                                                                                                                return false;
+                                                                                                        }
+                                                                                                    }
 
-    void QtVideoOutput::setFrameRate(double fps) {
-        m_impl->frameRate = fps;
-    }
-
-    bool QtVideoOutput::vsyncEnabled() const {
-        return true; // Qt Multimedia manages this
-    }
-
-    void QtVideoOutput::setVsyncEnabled(bool enabled) {
-        Q_UNUSED(enabled)
-    }
-
-    QImage QtVideoOutput::captureFrame() {
-        // Not directly supported with QVideoSink
-        return QImage();
-    }
-
-    void* QtVideoOutput::videoSink() const {
-        return m_impl->videoSink;
-    }
-
-    // =============================================================================
-    // VideoOutputFactory Implementation
-    // =============================================================================
-
-    std::unique_ptr<VideoOutput> VideoOutputFactory::create(VideoBackend backend, QOpenGLContext* context) {
-        switch (backend) {
-            case VideoBackend::OpenGL:
-                return std::make_unique<OpenGLVideoOutput>(context);
-            case VideoBackend::QtMultimedia:
-                return std::make_unique<QtVideoOutput>();
-            case VideoBackend::CPU:
-            case VideoBackend::Null:
-            default:
-                return std::make_unique<QtVideoOutput>(); // Fallback
-        }
-    }
-
-    bool VideoOutputFactory::isBackendAvailable(VideoBackend backend) {
-        switch (backend) {
-            case VideoBackend::OpenGL:
-                return QOpenGLContext::openGLModuleType() != QOpenGLContext::LibGLES;
-            case VideoBackend::QtMultimedia:
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    QString VideoOutputFactory::backendName(VideoBackend backend) {
-        switch (backend) {
-            case VideoBackend::OpenGL: return "OpenGL";
-            case VideoBackend::QtMultimedia: return "Qt Multimedia";
-            case VideoBackend::CPU: return "Software";
-            case VideoBackend::Null: return "Null";
-            default: return "Unknown";
-        }
-    }
+                                                                                                    QString VideoOutputFactory::backendName(VideoBackend backend) {
+                                                                                                        switch (backend) {
+                                                                                                            case VideoBackend::OpenGL:        return "OpenGL";
+                                                                                                            case VideoBackend::QtMultimedia:  return "Qt Multimedia";
+                                                                                                            case VideoBackend::CPU:           return "Software";
+                                                                                                            case VideoBackend::Null:          return "Null";
+                                                                                                            default:                          return "Unknown";
+                                                                                                        }
+                                                                                                    }
 
 } // namespace Aegis
