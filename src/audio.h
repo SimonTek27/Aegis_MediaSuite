@@ -35,6 +35,13 @@ namespace Aegis {
 
     class AudioEngine;
 
+    struct AudioFormat {
+        int sampleRate = 44100;
+        int channels = 2;
+        int bitsPerSample = 16;
+        bool isFloat = false;
+    };
+
     // ============================================================================
     // Audio Data Structures
     // ============================================================================

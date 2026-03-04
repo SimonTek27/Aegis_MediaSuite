@@ -25,8 +25,8 @@
 #include "disc.h"
 #include "audioeditor.h"
 
-#include <QQmlContext>
-#include <QQmlEngine>
+#include <QtQml/QQmlContext>
+#include <QtQml/QQmlEngine>
 #include <QStandardPaths>
 #include <QFileInfo>
 #include <QDir>

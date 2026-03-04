@@ -19,9 +19,9 @@
 #include <QTimer>
 #include <QProcess>
 #include <QRegularExpression>
-#include <QAudioDeviceInfo>
-#include <QCameraInfo>
-#include <QtConcurrent>
+#include <QMediaDevices>
+#include <QCameraDevice>
+#include <QtConcurrent/QtConcurrent>
 
 // GStreamer includes
 #include <gst/gst.h>

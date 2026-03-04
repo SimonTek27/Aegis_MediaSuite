@@ -23,6 +23,8 @@
 // Forward declarations
 namespace Aegis {
     class MpvBackend;  // Pillar 3 for preview
+    struct AudioFormat;
+    class EditAction;
 }
 
 namespace Aegis {
@@ -69,7 +71,7 @@ namespace Aegis {
         Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStateChanged)
         Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStateChanged)
         Q_PROPERTY(QString filePath READ filePath NOTIFY filePathChanged)
-        Q_PROPERTY(AudioFormat format READ format NOTIFY formatChanged)
+        Q_PROPERTY(Aegis::AudioFormat format READ format NOTIFY formatChanged)
         Q_PROPERTY(qint64 totalFrames READ totalFrames NOTIFY bufferChanged)
         Q_PROPERTY(double duration READ duration NOTIFY bufferChanged)
         Q_PROPERTY(double position READ position WRITE setPosition NOTIFY positionChanged)
@@ -179,7 +181,7 @@ namespace Aegis {
 
         // Data
         EnhancedAudioBuffer m_buffer;
-        AudioFormat m_format;
+        Aegis::AudioFormat m_format;
         QString m_filePath;
         bool m_modified = false;
         Selection m_selection;
@@ -190,7 +192,7 @@ namespace Aegis {
         WaveformCache* m_waveformCache;
 
         // Undo/Redo
-        QVector<std::unique_ptr<EditAction>> m_undoStack;
+        QVector<std::unique_ptr<Aegis::EditAction>> m_undoStack;
         int m_undoIndex = 0;
     };
 

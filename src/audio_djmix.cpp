@@ -74,12 +74,25 @@ namespace Aegis {
 
         const int primeFrames = m_stretcher->getPreferredStartPad();
         std::vector<float> silence(primeFrames * m_channels, 0.0f);
-        m_stretcher->process(silence.data(), primeFrames, false);
+
+        // build per-channel input pointers for RubberBand
+        std::vector<const float*> inPtrs(m_channels);
+        for (int ch = 0; ch < m_channels; ++ch) {
+            inPtrs[ch] = silence.data() + ch * primeFrames;
+        }
+
+        m_stretcher->process(inPtrs.data(), primeFrames, false);
 
         int delay = m_stretcher->getStartDelay();
         if (delay > 0 && m_stretcher->available() >= delay) {
             std::vector<float> discard(delay * m_channels);
-            m_stretcher->retrieve(discard.data(), delay);
+
+            std::vector<float*> outPtrs(m_channels);
+            for (int ch = 0; ch < m_channels; ++ch) {
+                outPtrs[ch] = discard.data() + ch * delay;
+            }
+
+            m_stretcher->retrieve(outPtrs.data(), delay);
         }
 
         m_stretcherPrimed = true;
@@ -107,18 +120,28 @@ namespace Aegis {
 
             if (available > 0) {
                 int toRetrieve = std::min(available, count - outputGenerated);
-                m_stretcher->retrieve(output + outputGenerated * m_channels, toRetrieve);
+
+                std::vector<float*> outPtrs(m_channels);
+                for (int ch = 0; ch < m_channels; ++ch) {
+                    outPtrs[ch] = output + (outputGenerated * m_channels) + ch * toRetrieve;
+                }
+
+                m_stretcher->retrieve(outPtrs.data(), toRetrieve);
                 outputGenerated += toRetrieve;
             } else {
                 int inputFrames = std::min(4096, static_cast<int>(m_totalSamples - sourcePos));
                 if (inputFrames <= 0) break;
 
-                // Get source samples from buffer
                 std::vector<float> input(inputFrames * m_channels);
                 m_buffer->copyFrom(*m_buffer, static_cast<int>(sourcePos), 0, inputFrames);
 
+                std::vector<const float*> inPtrs(m_channels);
+                for (int ch = 0; ch < m_channels; ++ch) {
+                    inPtrs[ch] = input.data() + ch * inputFrames;
+                }
+
                 bool final = (sourcePos + inputFrames >= m_totalSamples);
-                m_stretcher->process(input.data(), inputFrames, final);
+                m_stretcher->process(inPtrs.data(), inputFrames, final);
                 sourcePos += inputFrames;
             }
         }

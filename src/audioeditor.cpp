@@ -1,6 +1,7 @@
 // audioeditor.cpp
 #include "audioeditor.h"
 #include "audio_output.h"  // For playback
+#include "mpv_backend.h"
 #include <QFileInfo>
 #include <QDir>
 #include <QDebug>

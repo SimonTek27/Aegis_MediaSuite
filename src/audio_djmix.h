@@ -12,11 +12,6 @@
 
 namespace Aegis {
 
-    // Forward declaration for RubberBand
-    namespace RubberBand {
-        class RubberBandStretcher;
-    }
-
     // ============================================================================
     // DJClip - Uses AudioClip base with time-stretching
     // ============================================================================
@@ -65,7 +60,7 @@ namespace Aegis {
 
         QString m_sourcePath;
         std::shared_ptr<EnhancedAudioBuffer> m_buffer;
-        std::unique_ptr<RubberBand::RubberBandStretcher> m_stretcher;
+        std::unique_ptr<::RubberBand::RubberBandStretcher> m_stretcher;
 
         // State
         std::atomic<double> m_tempoRatio{1.0};

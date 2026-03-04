@@ -3,7 +3,7 @@
 
 #include <QObject>
 #include <QtQml/QQmlApplicationEngine>
-#include <QQmlContext>
+#include <QtQml/QQmlContext>
 #include <QVariantMap>
 #include <memory>
 #include <type_traits>

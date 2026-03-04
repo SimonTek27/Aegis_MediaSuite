@@ -1,52 +1,31 @@
-// core.h - Main playback engine core interface
+// core.h - Clean Architecture Core with Dependency Injection
 #pragma once
 
 #include <QObject>
 #include <QUrl>
-#include <QVariantList>
 #include <QTimer>
 #include <memory>
 #include <vector>
-#include <atomic>
 #include <optional>
+#include <concepts>
+#include "raii_wrappers.h"
 
 namespace Aegis {
 
-    // Forward declarations to reduce header dependencies
-    class AudioEngine;
-    class VideoEngine;
-    class Library;
+    // ============================================================================
+    // Pure Interfaces (Dependency Inversion)
+    // ============================================================================
 
-    // Backend types live here to keep things centralized
-
-    struct TrackMetadata {
-        QString title;
-        QString artist;
-        QString album;
-        QString genre;
-        int year = 0;
-        int trackNumber = 0;
-    };
-
-    enum class PlaybackState {
-        Stopped,
-        Playing,
-        Paused,
-        Buffering
-    };
-
-    class AudioBackend : public QObject {
-        Q_OBJECT
+    class IAudioBackend {
     public:
-        explicit AudioBackend(QObject *parent = nullptr) : QObject(parent) {}
-        ~AudioBackend() override = default;
+        virtual ~IAudioBackend() = default;
 
-        virtual void load(const QString &path) = 0;
-        virtual void play() = 0;
-        virtual void pause() = 0;
-        virtual void stop() = 0;
-        virtual void seek(double position) = 0;
-        virtual void setVolume(double volume) = 0;
+        virtual Result<void> load(const QString& path) = 0;
+        virtual Result<void> play() = 0;
+        virtual Result<void> pause() = 0;
+        virtual Result<void> stop() = 0;
+        virtual Result<void> seek(double position) = 0;
+        virtual Result<void> setVolume(double volume) = 0;
 
         virtual PlaybackState state() const = 0;
         virtual double position() const = 0;
@@ -54,366 +33,501 @@ namespace Aegis {
         virtual TrackMetadata metadata() const = 0;
         virtual bool hasVideo() const = 0;
 
-        virtual void setAudioCallback(
-            std::function<void(const QByteArray &, int)> cb) = 0;
-
-    signals:
-        void durationChanged(double);
-        void finished();
-        void stateChanged(PlaybackState);
-        void metadataChanged(const TrackMetadata &);
+        virtual void setAudioCallback(std::function<void(const QByteArray&, int)> cb) = 0;
     };
 
+    class IVideoBackend {
+    public:
+        virtual ~IVideoBackend() = default;
+
+        virtual Result<void> load(const QUrl& url) = 0;
+        virtual Result<void> play() = 0;
+        virtual Result<void> pause() = 0;
+        virtual Result<void> stop() = 0;
+        virtual Result<void> seek(double position) = 0;
+        virtual QImage currentFrame() const = 0;
+        virtual QSize videoSize() const = 0;
+        virtual bool hasVideo() const = 0;
+    };
+
+    class IAudioEngine {
+    public:
+        virtual ~IAudioEngine() = default;
+
+        virtual Result<void> processBuffer(float* buffer, int frames,
+                                           int sampleRate, int channels) = 0;
+                                           virtual Result<std::vector<float>> analyzeSpectrum(int size) = 0;
+                                           virtual double rmsLevel() const = 0;
+                                           virtual double peakLevel() const = 0;
+                                           virtual void setBpm(double bpm) = 0;
+                                           virtual double bpm() const = 0;
+    };
+
+    // ============================================================================
+    // Backend Factory with Availability Checking
+    // ============================================================================
+
+    template<typename T>
+    concept BackendType = requires {
+        typename T::Capabilities;
+        { T::name() } -> std::convertible_to<QString>;
+        { T::isAvailable() } -> std::convertible_to<bool>;
+    };
+
+    template<BackendType T>
     class BackendFactory {
     public:
-        virtual ~BackendFactory() = default;
-        virtual QString name() const = 0;
-        virtual std::unique_ptr<AudioBackend> create(QObject *parent) const = 0;
-        virtual bool isAvailable() const = 0;
+        using Capabilities = typename T::Capabilities;
+
+        static Result<std::unique_ptr<T>> create(QObject* parent = nullptr) {
+            if (!T::isAvailable()) {
+                return Result<std::unique_ptr<T>>::error(
+                    QString("%1 backend not available").arg(T::name()));
+            }
+
+            try {
+                return Result<std::unique_ptr<T>>::success(
+                    std::make_unique<T>(parent));
+            } catch (const std::exception& e) {
+                return Result<std::unique_ptr<T>>::error(
+                    QString("Failed to create %1 backend: %2")
+                    .arg(T::name(), e.what()));
+            }
+        }
     };
 
-    /**
-     * @brief Main playback controller and state manager
-     *
-     * Central orchestrator for all media playback operations.
-     * Manages playlist, audio/video synchronization, and state transitions.
-     * Provides QML-friendly interface with properties and signals.
-     */
+    // ============================================================================
+    // Playlist Item with Rich Metadata
+    // ============================================================================
+
+    class PlaylistItem {
+    public:
+        enum class Type {
+            LocalFile,
+            Stream,
+            DiscTrack,
+            Radio,
+            Podcast
+        };
+
+    private:
+        QUrl m_url;
+        QString m_title;
+        QString m_artist;
+        QString m_album;
+        std::optional<double> m_duration;
+        Type m_type{Type::LocalFile};
+        QVariantMap m_metadata;
+
+    public:
+        PlaylistItem() = default;
+        explicit PlaylistItem(const QUrl& url, Type type = Type::LocalFile);
+
+        const QUrl& url() const { return m_url; }
+        const QString& title() const { return m_title; }
+        const QString& artist() const { return m_artist; }
+        const QString& album() const { return m_album; }
+        std::optional<double> duration() const { return m_duration; }
+        Type type() const { return m_type; }
+        const QVariantMap& metadata() const { return m_metadata; }
+
+        void setTitle(const QString& t) { m_title = t; }
+        void setArtist(const QString& a) { m_artist = a; }
+        void setAlbum(const QString& a) { m_album = a; }
+        void setDuration(double d) { m_duration = d; }
+        void setMetadata(const QVariantMap& md) { m_metadata = md; }
+
+        bool isValid() const { return m_url.isValid(); }
+        QString displayName() const;
+    };
+
+    // ============================================================================
+    // Core Class with Dependency Injection
+    // ============================================================================
+
     class Core : public QObject {
         Q_OBJECT
-        // QML-accessible properties with automatic change notifications
         Q_PROPERTY(PlaybackState state READ state NOTIFY stateChanged)
         Q_PROPERTY(double position READ position NOTIFY positionChanged)
         Q_PROPERTY(double duration READ duration NOTIFY durationChanged)
         Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
         Q_PROPERTY(bool hasVideo READ hasVideo NOTIFY hasVideoChanged)
-        Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY currentTrackChanged)
-        Q_PROPERTY(QVariantList playlist READ playlist NOTIFY playlistChanged)
+        Q_PROPERTY(int playlistCount READ playlistCount NOTIFY playlistChanged)
 
     public:
-        /**
-         * @brief Constructs the Core playback engine
-         * @param library Shared pointer to media library database
-         * @param parent Parent QObject for memory management
-         */
-        explicit Core(std::shared_ptr<Library> library, QObject *parent = nullptr);
+        // Constructor with dependency injection
+        explicit Core(
+            std::unique_ptr<IAudioBackend> audioBackend,
+            std::unique_ptr<IVideoBackend> videoBackend,
+            std::unique_ptr<IAudioEngine> audioEngine,
+            QObject* parent = nullptr
+        ) : QObject(parent)
+        , m_audioBackend(std::move(audioBackend))
+        , m_videoBackend(std::move(videoBackend))
+        , m_audioEngine(std::move(audioEngine)) {
 
-        /**
-         * @brief Destructor with proper cleanup
-         */
-        ~Core() override;
+            if (!m_audioBackend || !m_videoBackend || !m_audioEngine) {
+                throw std::invalid_argument("All backends must be provided");
+            }
 
-        // Disable copying to prevent multiple instances controlling same resources
+            setupConnections();
+            setupPositionTimer();
+        }
+
+        ~Core() override = default;
+
+        // Disable copying
         Core(const Core&) = delete;
         Core& operator=(const Core&) = delete;
 
-        // ================ Playback Control API ================
+        // ================ Playback Control ================
 
-        /**
-         * @brief Load a single media file for playback
-         * @param url URL or local file path to media resource
-         *
-         * Clears existing playlist and loads the specified URL as single item.
-         * Does not start playback automatically.
-         */
-        Q_INVOKABLE void load(const QUrl &url);
+        Q_INVOKABLE Result<void> load(const QUrl& url) {
+            if (!url.isValid()) {
+                return Result<void>::error("Invalid URL");
+            }
 
-        /**
-         * @brief Start or resume playback
-         *
-         * If no track is loaded, starts playback from first playlist item.
-         * Resumes from paused position if applicable.
-         */
-        Q_INVOKABLE void play();
+            stop();
 
-        /**
-         * @brief Pause current playback
-         *
-         * Pauses at current position without unloading media.
-         * State can be restored with play().
-         */
-        Q_INVOKABLE void pause();
+            QString path = url.toLocalFile();
+            if (path.isEmpty()) {
+                path = url.toString();  // Handle streams
+            }
 
-        /**
-         * @brief Toggle between play and pause states
-         */
-        Q_INVOKABLE void playPause();
+            auto result = m_audioBackend->load(path);
+            if (result.isError()) {
+                return result;
+            }
 
-        /**
-         * @brief Stop playback completely
-         *
-         * Stops playback and resets position to beginning.
-         * Media remains loaded in engine.
-         */
-        Q_INVOKABLE void stop();
+            if (hasVideo()) {
+                auto videoResult = m_videoBackend->load(url);
+                if (videoResult.isError()) {
+                    qWarning() << "Video load failed:" << videoResult.error();
+                }
+            }
 
-        /**
-         * @brief Seek to specific position in current track
-         * @param position Time in seconds from start of track
-         *
-         * Position is clamped to valid range [0, duration].
-         * Updates both audio and video engines synchronously.
-         */
-        Q_INVOKABLE void seek(double position);
+            m_currentPlaylistIndex = -1;
+            emit sourceChanged(url);
 
-        /**
-         * @brief QML-compatible alias for seek()
-         */
-        Q_INVOKABLE void setPosition(double position) { seek(position); }
+            return Result<void>::success();
+        }
 
-        /**
-         * @brief Set playback volume level
-         * @param volume Volume level from 0.0 (mute) to 100.0 (max)
-         *
-         * Volume is applied to audio engine only.
-         * Value is automatically clamped to valid range.
-         */
-        Q_INVOKABLE void setVolume(double volume);
+        Q_INVOKABLE Result<void> play() {
+            if (m_playlist.empty() && m_currentPlaylistIndex < 0) {
+                return Result<void>::error("No media loaded");
+            }
 
-        // ================ Playlist Management API ================
+            if (m_currentPlaylistIndex < 0) {
+                setPlaylistIndex(0);
+            }
 
-        /**
-         * @brief Add media URL to end of playlist
-         * @param url URL or local file path to add
-         */
-        Q_INVOKABLE void enqueue(const QUrl &url);
+            auto result = m_audioBackend->play();
+            if (result.isError()) {
+                return result;
+            }
 
-        /**
-         * @brief Remove item from playlist at specified index
-         * @param index Zero-based position in playlist
-         *
-         * Adjusts current index if removal affects current playback.
-         */
-        Q_INVOKABLE void dequeue(int index);
+            if (hasVideo()) {
+                m_videoBackend->play();
+            }
 
-        /**
-         * @brief Remove all items from playlist
-         */
-        Q_INVOKABLE void clearPlaylist();
+            m_positionTimer.start();
+            return Result<void>::success();
+        }
 
-        /**
-         * @brief Advance to next track in playlist
-         *
-         * Handles repeat modes and end-of-playlist behavior.
-         */
-        Q_INVOKABLE void next();
+        Q_INVOKABLE Result<void> pause() {
+            auto result = m_audioBackend->pause();
+            if (result.isError()) {
+                return result;
+            }
 
-        /**
-         * @brief Return to previous track in playlist
-         *
-         * Does nothing if at beginning of playlist.
-         */
-        Q_INVOKABLE void previous();
+            if (hasVideo()) {
+                m_videoBackend->pause();
+            }
 
-        /**
-         * @brief Jump directly to specific playlist index
-         * @param index Zero-based position in playlist
-         *
-         * Stops current playback and loads specified track.
-         */
-        Q_INVOKABLE void setPlaylistIndex(int index);
+            m_positionTimer.stop();
+            return Result<void>::success();
+        }
 
-        // ================ State Query Methods ================
+        Q_INVOKABLE Result<void> playPause() {
+            if (state() == PlaybackState::Playing) {
+                return pause();
+            } else {
+                return play();
+            }
+        }
 
-        /**
-         * @brief Get current playback state
-         * @return Current PlaybackState enumeration value
-         */
+        Q_INVOKABLE Result<void> stop() {
+            m_audioBackend->stop();
+            if (hasVideo()) {
+                m_videoBackend->stop();
+            }
+            m_positionTimer.stop();
+            m_position.store(0.0);
+            emit positionChanged(0.0);
+
+            return Result<void>::success();
+        }
+
+        Q_INVOKABLE Result<void> seek(double position) {
+            position = std::clamp(position, 0.0, m_duration.load());
+
+            auto result = m_audioBackend->seek(position);
+            if (result.isError()) {
+                return result;
+            }
+
+            if (hasVideo()) {
+                m_videoBackend->seek(position);
+            }
+
+            m_position.store(position);
+            emit positionChanged(position);
+
+            return Result<void>::success();
+        }
+
+        Q_INVOKABLE Result<void> setVolume(double volume) {
+            volume = std::clamp(volume, 0.0, 100.0);
+
+            auto result = m_audioBackend->setVolume(volume);
+            if (result.isError()) {
+                return result;
+            }
+
+            m_volume.store(volume);
+            emit volumeChanged(volume);
+
+            return Result<void>::success();
+        }
+
+        // ================ Playlist Management ================
+
+        Q_INVOKABLE void enqueue(const QUrl& url) {
+            PlaylistItem item(url);
+            m_playlist.push_back(item);
+            emit playlistChanged();
+        }
+
+        Q_INVOKABLE void enqueue(const PlaylistItem& item) {
+            m_playlist.push_back(item);
+            emit playlistChanged();
+        }
+
+        Q_INVOKABLE Result<void> enqueueAndPlay(const QUrl& url) {
+            enqueue(url);
+            return play();
+        }
+
+        Q_INVOKABLE Result<void> removeFromPlaylist(int index) {
+            if (index < 0 || index >= static_cast<int>(m_playlist.size())) {
+                return Result<void>::error("Invalid playlist index");
+            }
+
+            m_playlist.erase(m_playlist.begin() + index);
+
+            if (index == m_currentPlaylistIndex.load()) {
+                stop();
+                m_currentPlaylistIndex.store(-1);
+            } else if (index < m_currentPlaylistIndex.load()) {
+                m_currentPlaylistIndex.store(m_currentPlaylistIndex.load() - 1);
+            }
+
+            emit playlistChanged();
+            return Result<void>::success();
+        }
+
+        Q_INVOKABLE void clearPlaylist() {
+            m_playlist.clear();
+            m_currentPlaylistIndex.store(-1);
+            emit playlistChanged();
+        }
+
+        Q_INVOKABLE Result<void> setPlaylistIndex(int index) {
+            if (index < 0 || index >= static_cast<int>(m_playlist.size())) {
+                return Result<void>::error("Invalid playlist index");
+            }
+
+            return loadTrack(index);
+        }
+
+        Q_INVOKABLE Result<void> next() {
+            int next = m_currentPlaylistIndex.load() + 1;
+            if (next < static_cast<int>(m_playlist.size())) {
+                return setPlaylistIndex(next);
+            } else if (m_repeatMode == RepeatMode::Playlist) {
+                return setPlaylistIndex(0);
+            }
+            return Result<void>::success();  // End of playlist
+        }
+
+        Q_INVOKABLE Result<void> previous() {
+            int prev = m_currentPlaylistIndex.load() - 1;
+            if (prev >= 0) {
+                return setPlaylistIndex(prev);
+            }
+            return Result<void>::success();
+        }
+
+        // ================ State Getters ================
+
         PlaybackState state() const { return m_state.load(); }
-
-        /**
-         * @brief Get current playback position
-         * @return Current position in seconds
-         */
         double position() const { return m_position.load(); }
-
-        /**
-         * @brief Get duration of currently loaded track
-         * @return Duration in seconds, 0.0 if no media loaded
-         */
         double duration() const { return m_duration.load(); }
-
-        /**
-         * @brief Get current volume level
-         * @return Volume from 0.0 to 100.0
-         */
         double volume() const { return m_volume.load(); }
+        bool hasVideo() const { return m_videoBackend->hasVideo(); }
 
-        /**
-         * @brief Check if current media contains video stream
-         * @return True if video track is available
-         */
-        bool hasVideo() const;
+        int playlistCount() const { return static_cast<int>(m_playlist.size()); }
+        int currentPlaylistIndex() const { return m_currentPlaylistIndex.load(); }
 
-        /**
-         * @brief Get title of currently playing track
-         * @return Track title or empty string if no track loaded
-         */
-        QString currentTitle() const;
+        std::optional<PlaylistItem> currentItem() const {
+            int idx = m_currentPlaylistIndex.load();
+            if (idx >= 0 && idx < static_cast<int>(m_playlist.size())) {
+                return m_playlist[static_cast<size_t>(idx)];
+            }
+            return std::nullopt;
+        }
 
-        /**
-         * @brief Get playlist data in QML-compatible format
-         * @return List of playlist items as QVariantMap objects
-         */
-        QVariantList playlist() const;
+        const std::vector<PlaylistItem>& playlist() const { return m_playlist; }
 
-        // ================ Engine Access (Advanced Usage) ================
+        // QML-friendly playlist
+        QVariantList playlistVariant() const;
 
-        /**
-         * @brief Get raw pointer to audio engine
-         * @return AudioEngine instance for low-level control
-         *
-         * Warning: Direct engine manipulation may bypass Core state management.
-         */
-        AudioEngine* audioEngine() { return m_audio.get(); }
+        // ================ Audio Analysis ================
 
-        /**
-         * @brief Get raw pointer to video engine
-         * @return VideoEngine instance for low-level control
-         */
-        VideoEngine* videoEngine() { return m_video.get(); }
+        IAudioEngine* audioEngine() { return m_audioEngine.get(); }
+        const IAudioEngine* audioEngine() const { return m_audioEngine.get(); }
+
+        Result<std::vector<float>> analyzeSpectrum(int size = 1024) {
+            return m_audioEngine->analyzeSpectrum(size);
+        }
+
+        // ================ Repeat/Shuffle ================
+
+        enum class RepeatMode { None, Track, Playlist };
+        Q_ENUM(RepeatMode)
+
+        void setRepeatMode(RepeatMode mode) { m_repeatMode = mode; }
+        RepeatMode repeatMode() const { return m_repeatMode; }
+
+        void setShuffle(bool enabled) { m_shuffle = enabled; }
+        bool shuffle() const { return m_shuffle; }
 
     signals:
-        // ================ State Change Notifications ================
-
-        /**
-         * @brief Emitted when playback state changes
-         * @param state New playback state
-         */
         void stateChanged(PlaybackState state);
-
-        /**
-         * @brief Emitted when playback position changes
-         * @param position New position in seconds
-         *
-         * Throttled for UI updates but precise for seeking operations.
-         */
         void positionChanged(double position);
-
-        /**
-         * @brief Emitted when track duration is known or changes
-         * @param duration Duration in seconds
-         */
         void durationChanged(double duration);
-
-        /**
-         * @brief Emitted when volume level changes
-         * @param volume New volume level (0.0-100.0)
-         */
         void volumeChanged(double volume);
-
-        /**
-         * @brief Emitted when current track changes
-         * @param title Title of new track
-         */
-        void currentTrackChanged(const QString &title);
-
-        /**
-         * @brief Emitted when video availability changes
-         * @param hasVideo True if video stream is available
-         */
         void hasVideoChanged(bool hasVideo);
-
-        /**
-         * @brief Emitted when playlist contents change
-         */
+        void sourceChanged(const QUrl& source);
         void playlistChanged();
-
-        /**
-         * @brief Emitted when playback error occurs
-         * @param message Human-readable error description
-         */
-        void error(const QString &message);
-
-        /**
-         * @brief Emitted when playlist playback finishes
-         */
+        void currentTrackChanged(const PlaylistItem& item);
         void playlistFinished();
-
-        /**
-         * @brief Emitted when end of stream is reached
-         *
-         * Signals that playback has naturally completed.
-         */
-        void endOfStream();
+        void error(const QString& message);
 
     private slots:
-        // ================ Backend Event Handlers ================
+        void onAudioBackendStateChanged(PlaybackState state) {
+            m_state.store(state);
+            emit stateChanged(state);
 
-        /**
-         * @brief Handle state changes from audio/video engines
-         * @param state New engine state
-         */
-        void onBackendStateChanged(PlaybackState state);
+            if (state == PlaybackState::Playing) {
+                m_positionTimer.start();
+            } else {
+                m_positionTimer.stop();
+            }
+        }
 
-        /**
-         * @brief Handle position updates from backend engines
-         * @param pos Current position in seconds
-         */
-        void onBackendPositionChanged(double pos);
+        void onAudioBackendPositionChanged(double pos) {
+            m_position.store(pos);
+            emit positionChanged(pos);
+        }
 
-        /**
-         * @brief Handle duration updates from backend engines
-         * @param dur Track duration in seconds
-         */
-        void onBackendDurationChanged(double dur);
+        void onAudioBackendDurationChanged(double dur) {
+            m_duration.store(dur);
+            emit durationChanged(dur);
 
-        /**
-         * @brief Handle track completion from backend engines
-         *
-         * Triggers auto-advance to next track or end-of-stream.
-         */
-        void onBackendFinished();
+            if (auto item = currentItem()) {
+                const_cast<PlaylistItem&>(*item).setDuration(dur);
+            }
+        }
+
+        void onAudioBackendFinished() {
+            if (m_repeatMode == RepeatMode::Track) {
+                seek(0);
+                play();
+            } else {
+                next().onError([this](const QString& err) {
+                    qWarning() << "Auto-advance failed:" << err;
+                    emit playlistFinished();
+                });
+            }
+        }
 
     private:
-        // ================ Private Helper Methods ================
+        Result<void> loadTrack(int index) {
+            if (index < 0 || index >= static_cast<int>(m_playlist.size())) {
+                return Result<void>::error("Invalid track index");
+            }
 
-        /**
-         * @brief Load and prepare track from playlist
-         * @param index Playlist position to load
-         */
-        void loadTrack(int index);
+            const auto& item = m_playlist[static_cast<size_t>(index)];
 
-        /**
-         * @brief Update metadata for current track
-         *
-         * Queries library database and backend engines for metadata.
-         */
-        void updateMetadata();
+            auto result = m_audioBackend->load(item.url().toLocalFile());
+            if (result.isError()) {
+                return result;
+            }
 
-        // ================ Data Structures ================
+            if (hasVideo()) {
+                m_videoBackend->load(item.url());
+            }
 
-        /**
-         * @brief Internal representation of playlist item
-         */
-        struct PlaylistItem {
-            QUrl url;                       ///< Media resource location
-            QString title;                  ///< Display title (from metadata or filename)
-            std::optional<double> duration; ///< Track duration if known
-        };
+            m_audioBackend->setVolume(m_volume.load());
+            m_currentPlaylistIndex.store(index);
+            emit currentTrackChanged(item);
+            emit sourceChanged(item.url());
 
-        // ================ Member Variables ================
+            return Result<void>::success();
+        }
 
-        std::vector<PlaylistItem> m_playlist;       ///< Ordered list of media items
-        std::atomic<int> m_currentIndex{-1};        ///< Currently playing item index
+        void setupConnections() {
+            // Forward backend signals
+            connect(m_audioBackend.get(), &IAudioBackend::stateChanged,
+                    this, &Core::onAudioBackendStateChanged);
+            connect(m_audioBackend.get(), &IAudioBackend::positionChanged,
+                    this, &Core::onAudioBackendPositionChanged);
+            connect(m_audioBackend.get(), &IAudioBackend::durationChanged,
+                    this, &Core::onAudioBackendDurationChanged);
+            connect(m_audioBackend.get(), &IAudioBackend::finished,
+                    this, &Core::onAudioBackendFinished);
+            connect(m_audioBackend.get(), &IAudioBackend::error,
+                    this, &Core::error);
+        }
 
-        // Playback state (atomic for thread-safe access)
+        void setupPositionTimer() {
+            m_positionTimer.setInterval(16);  // ~60fps
+            connect(&m_positionTimer, &QTimer::timeout, [this]() {
+                if (state() == PlaybackState::Playing) {
+                    m_position.store(m_audioBackend->position());
+                    emit positionChanged(m_position.load());
+                }
+            });
+        }
+
+        // Dependencies (injected)
+        std::unique_ptr<IAudioBackend> m_audioBackend;
+        std::unique_ptr<IVideoBackend> m_videoBackend;
+        std::unique_ptr<IAudioEngine> m_audioEngine;
+
+        // State
+        std::vector<PlaylistItem> m_playlist;
+        std::atomic<int> m_currentPlaylistIndex{-1};
         std::atomic<PlaybackState> m_state{PlaybackState::Stopped};
-        std::atomic<double> m_position{0.0};        ///< Current playback position (seconds)
-        std::atomic<double> m_duration{0.0};        ///< Current track duration (seconds)
-        std::atomic<double> m_volume{100.0};        ///< Current volume level (0-100)
+        std::atomic<double> m_position{0.0};
+        std::atomic<double> m_duration{0.0};
+        std::atomic<double> m_volume{100.0};
 
-        // Engine components (managed with unique_ptr for automatic cleanup)
-        std::unique_ptr<AudioEngine>   m_audio;     ///< Audio analysis/effects engine
-        std::unique_ptr<AudioBackend>  m_backend;   ///< Transport/decoding backend (e.g., MpvBackend)
-        std::unique_ptr<VideoEngine>   m_video;     ///< Video decoding and rendering
-        std::shared_ptr<Library>       m_library;   ///< Media metadata database
+        RepeatMode m_repeatMode{RepeatMode::None};
+        bool m_shuffle{false};
 
-        // UI update timer for smooth position display
-        QTimer m_positionTimer;                     ///< 60Hz timer for UI updates
+        QTimer m_positionTimer;
     };
 
 } // namespace Aegis
-
-// Register enums for QML type system
-Q_DECLARE_METATYPE(Aegis::PlaybackState)

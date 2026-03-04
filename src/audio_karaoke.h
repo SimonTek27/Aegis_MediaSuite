@@ -10,6 +10,7 @@
 #include <QSqlDatabase>
 #include <QUuid>
 #include <QColor>
+#include <QImage>
 #include <memory>
 
 // Forward declarations - only pillars 1 & 2
@@ -22,7 +23,32 @@ namespace Aegis {
 
 namespace Aegis {
 
-    // ... (KaraokeSong, KaraokeSinger, KaraokeQueueItem structs unchanged) ...
+    struct KaraokeSong {
+        QString id;
+        QString filePath;
+        QString audioPath;
+        QString cdgPath;
+        QString title;
+        QString artist;
+        QString language;
+        int durationSeconds{0};
+    };
+
+    struct KaraokeSinger {
+        QString id;
+        QString name;
+        QString displayName;
+        int rotationIndex{0};
+    };
+
+    struct KaraokeQueueItem {
+        QString id;
+        QString songId;
+        QString singerId;
+        int keyChange{0};
+        bool isCompleted{false};
+        bool isPlaying{false};
+    };
 
     /**
      * @brief Karaoke controller - uses AudioEngine for all audio processing
@@ -116,6 +142,7 @@ namespace Aegis {
         void lyricsLineChanged(const QString &line, int lineNumber, double timing);
         void pitchDetected(double frequency, const QString &note);
         void error(const QString &message);
+        void frameReady(const QImage &frame);
 
     private slots:
         void onPlaybackPositionChanged(double pos);

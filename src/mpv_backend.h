@@ -30,6 +30,13 @@ namespace Aegis {
             m_audioCallback = std::move(cb);
         }
 
+    signals:
+        void positionChanged(double position);
+        void durationChanged(double duration);
+        void finished();
+        void stateChanged(Aegis::PlaybackState state);
+        void metadataChanged(const Aegis::TrackMetadata& metadata);
+
     private slots:
         void handleEvent();
 

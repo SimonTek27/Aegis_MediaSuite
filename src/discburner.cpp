@@ -15,7 +15,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QMutexLocker>
-#include <libburn/libburn.h>
+#include <libburn.h>
 #include <libisofs/libisofs.h>
 
 // Mutex for libburn initialization (libburn is not thread-safe)
