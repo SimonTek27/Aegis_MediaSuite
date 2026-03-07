@@ -484,7 +484,10 @@ namespace Aegis {
          * Must be called before any burning operations.
          * Thread-safe via static initialization.
          */
-        void initializeLibburn();
+        bool initializeLibburn();
+        BurnerCapabilities getCapabilitiesViaLibburn(const QString& device);
+        int getMaxWriteSpeed(const QString& device, const QString& mediaType);
+        BurnerCapabilities queryUDisks2Capabilities(const QString& device, BurnerCapabilities caps);
 
         /**
          * @brief Cleanup libburn resources

@@ -23,10 +23,14 @@ namespace Aegis {
     class Disc;             // From disc.h
     class CDBurner;         // From discburner.h
     struct BurnJob;         // From discburner.h
-    struct Track;           // From library.h
 }
 
+#include "library.h"
+#include "discburner.h"   // Needed for complete BurnJob definition
+
 namespace Aegis {
+    // Use LibraryTrack directly to avoid name clash with audio_daw.h::Track
+    using LabelTrack = LibraryTrack;
 
     enum class LabelSheetType {
         A4, Letter, Custom,
@@ -139,7 +143,7 @@ namespace Aegis {
         void deserialize(const QVariantMap& map) override;
 
         // Convenience builder
-        void setFromLibraryQuery(const QVector<Track>& libraryTracks);
+        void setFromLibraryQuery(const QVector<LibraryTrack>& libraryTracks);
     };
 
     struct TemplateGeometry {
@@ -278,7 +282,7 @@ namespace Aegis {
     private slots:
         void onLibraryQueryFinished();
         void onDiscScanned();
-        void onBurnFinished(bool success, const BurnJob& job);
+        void onBurnFinished(bool success, const QString& message);
 
     private:
         void markModified();
@@ -301,7 +305,8 @@ namespace Aegis {
 
         // Async integration
         Library* m_pendingLibrary{nullptr};
-        std::unique_ptr<QFutureWatcher<QVector<Track>>> m_libraryWatcher;
+        std::unique_ptr<QFutureWatcher<std::vector<LibraryTrack>>> m_libraryWatcher;
+        BurnJob m_pendingBurnJob;  ///< Stored by attachToBurner/setPendingBurnJob before burning starts
 
         // Printer
         std::unique_ptr<QPrinter> m_printer;

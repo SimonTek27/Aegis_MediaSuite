@@ -106,6 +106,102 @@ namespace Aegis {
     // AudioMiddleware Implementation
     // =============================================================================
 
+    // =============================================================================
+    // AudioEndpoint base class
+    // =============================================================================
+
+    AudioEndpoint::AudioEndpoint(const StreamConfig& config, QObject* parent)
+        : QObject(parent), m_config(config) {}
+
+    AudioEndpoint::~AudioEndpoint() = default;
+
+    void AudioEndpoint::setProcessCallback(std::function<void(float*, int)> callback) {
+        m_processCallback = std::move(callback);
+    }
+
+    // LocalSocketEndpoint private slots
+    void LocalSocketEndpoint::onNewConnection()   {}
+    void LocalSocketEndpoint::onDataAvailable()   {}
+    void LocalSocketEndpoint::onDisconnected()    {}
+
+    // NetworkAudioEndpoint private slots
+    void NetworkAudioEndpoint::onUdpReadyRead()  {}
+    void NetworkAudioEndpoint::onTcpReadyRead()  {}
+    void NetworkAudioEndpoint::onConnected()     {}
+    void NetworkAudioEndpoint::onDisconnected()  {}
+
+    // =============================================================================
+    // AudioMiddleware missing Q_INVOKABLE stubs
+    // =============================================================================
+
+    QStringList AudioMiddleware::endpointNames() const {
+        return m_endpoints.keys();
+    }
+    bool AudioMiddleware::endpointExists(const QString& name) const {
+        return m_endpoints.contains(name);
+    }
+    void AudioMiddleware::disconnectEndpoints(const QString& source, const QString& destination) {
+        m_routingTable[source].removeAll(destination);
+    }
+    bool AudioMiddleware::isConnected(const QString& source, const QString& destination) {
+        return m_routingTable.value(source).contains(destination);
+    }
+    bool AudioMiddleware::startEndpoint(const QString& name) {
+        auto it = m_endpoints.find(name);
+        return it != m_endpoints.end() && it.value()->initialize();
+    }
+    void AudioMiddleware::stopEndpoint(const QString& name) {
+        auto it = m_endpoints.find(name);
+        if (it != m_endpoints.end()) it.value()->shutdown();
+    }
+    bool AudioMiddleware::isRunning(const QString& name) {
+        auto it = m_endpoints.find(name);
+        return it != m_endpoints.end() && it.value()->isRunning();
+    }
+    bool AudioMiddleware::injectAudio(const QString&, const float*, int)  { return false; }
+    bool AudioMiddleware::captureAudio(const QString&, float*, int)       { return false; }
+    bool AudioMiddleware::addEffectToEndpoint(const QString&, std::shared_ptr<AudioEffect>) { return false; }
+    void AudioMiddleware::removeEffectFromEndpoint(const QString&, int)   {}
+    bool AudioMiddleware::bridgeToApplication(const QString&, const QString&, StreamProtocol) { return false; }
+    bool AudioMiddleware::bridgeToZoom(const QString&)                    { return false; }
+    void AudioMiddleware::destroyVirtualDevice(const QString& name)       { destroyEndpoint(name); }
+    void AudioMiddleware::setMonitoringEnabled(const QString&, bool)      {}
+    float AudioMiddleware::getEndpointLevel(const QString&)               { return 0.0f; }
+    bool AudioMiddleware::active() const                                  { return m_active; }
+
+    // =============================================================================
+    // GameAudioBridge stubs
+    // =============================================================================
+
+    GameAudioBridge::GameAudioBridge(AudioMiddleware* middleware, QObject* parent) : QObject(parent), m_middleware(middleware) {}
+    bool GameAudioBridge::initializeEngine(const QString&)               { return false; }
+    void GameAudioBridge::shutdownEngine()                               {}
+    void GameAudioBridge::postEvent(const QString&)                      {}
+    void GameAudioBridge::setState(const QString&, const QString&)       {}
+    void GameAudioBridge::setRTPC(const QString&, float)                 {}
+    void GameAudioBridge::setSwitch(const QString&, const QString&)      {}
+    void GameAudioBridge::setListenerPosition(float, float, float)       {}
+    void GameAudioBridge::setSourcePosition(const QString&, float, float, float) {}
+    void GameAudioBridge::setSourceOcclusion(const QString&, float)      {}
+    bool GameAudioBridge::loadBank(const QString&)                       { return false; }
+    void GameAudioBridge::unloadBank(const QString&)                     {}
+
+    // =============================================================================
+    // StreamingAudio stubs
+    // =============================================================================
+
+    StreamingAudio::StreamingAudio(AudioMiddleware* middleware, QObject* parent) : QObject(parent), m_middleware(middleware) {}
+    bool StreamingAudio::setupOBSCapture(const QString&)                 { return false; }
+    bool StreamingAudio::setupOBSOutput(const QString&)                  { return false; }
+    bool StreamingAudio::setupVirtualMicrophone(const QString&)          { return false; }
+    bool StreamingAudio::setupVirtualSpeaker(const QString&)             { return false; }
+    void StreamingAudio::setStreamMix(const QString&, float)             {}
+    void StreamingAudio::muteStreamSource(const QString&, bool)          {}
+
+    // =============================================================================
+    // AudioMiddleware Implementation
+    // =============================================================================
+
     AudioMiddleware::AudioMiddleware(AudioEngine* engine, QObject* parent)
     : QObject(parent), m_engine(engine) {}
 
@@ -243,5 +339,81 @@ namespace Aegis {
                                                                                        m_active = false;
                                                                                        emit activeChanged();
                                                                                    }
+
+    void AudioMiddleware::onEndpointAudio(const QByteArray& data, int sampleRate) {
+        Q_UNUSED(data) Q_UNUSED(sampleRate)
+    }
+
+    // ─── SharedMemoryEndpoint ─────────────────────────────────────────────────
+
+    SharedMemoryEndpoint::SharedMemoryEndpoint(const StreamConfig& config, QObject* parent)
+        : AudioEndpoint(config, parent)
+        , m_ringBuffer(
+              config.endpointName.isEmpty() ? QStringLiteral("aegis_shm") : config.endpointName,
+              static_cast<size_t>(config.bufferFrames * config.channels * 4),
+              true)
+    {}
+
+    SharedMemoryEndpoint::~SharedMemoryEndpoint() { shutdown(); }
+
+    bool SharedMemoryEndpoint::initialize() {
+        m_running.store(true);
+        return true;
+    }
+
+    void SharedMemoryEndpoint::shutdown() {
+        m_running.store(false);
+    }
+
+    // ─── LocalSocketEndpoint ──────────────────────────────────────────────────
+
+    LocalSocketEndpoint::LocalSocketEndpoint(const StreamConfig& config, QObject* parent)
+        : AudioEndpoint(config, parent) {}
+
+    LocalSocketEndpoint::~LocalSocketEndpoint() { shutdown(); }
+
+    bool LocalSocketEndpoint::initialize() {
+        m_running.store(true);
+        return true;
+    }
+
+    void LocalSocketEndpoint::shutdown() {
+        m_running.store(false);
+        if (m_socket) { m_socket->disconnectFromServer(); }
+    }
+
+    bool LocalSocketEndpoint::isRunning() const { return m_running.load(); }
+
+    // ─── NetworkAudioEndpoint ─────────────────────────────────────────────────
+
+    NetworkAudioEndpoint::NetworkAudioEndpoint(const StreamConfig& config, QObject* parent)
+        : AudioEndpoint(config, parent) {}
+
+    NetworkAudioEndpoint::~NetworkAudioEndpoint() { shutdown(); }
+
+    bool NetworkAudioEndpoint::initialize() {
+        m_running.store(true);
+        return true;
+    }
+
+    void NetworkAudioEndpoint::shutdown() { m_running.store(false); }
+
+    bool NetworkAudioEndpoint::isRunning() const { return m_running.load(); }
+
+    // ─── PipeWireEndpoint ─────────────────────────────────────────────────────
+
+    PipeWireEndpoint::PipeWireEndpoint(const StreamConfig& config, QObject* parent)
+        : AudioEndpoint(config, parent) {}
+
+    PipeWireEndpoint::~PipeWireEndpoint() { shutdown(); }
+
+    bool PipeWireEndpoint::initialize() {
+        m_running.store(true);
+        return true;
+    }
+
+    void PipeWireEndpoint::shutdown() { m_running.store(false); }
+
+    bool PipeWireEndpoint::isRunning() const { return m_running.load(); }
 
 } // namespace Aegis

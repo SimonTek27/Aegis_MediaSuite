@@ -2,18 +2,19 @@
 #pragma once
 
 #include <QObject>
+#include <QDebug>
 #include <QString>
 #include <QVector>
 #include <QVariantList>
 #include <QUrl>
 #include <memory>
+#include "raii_wrappers.h"
 #include <optional>
 
-// Forward declarations
-struct CdIo_t;
-struct cdrom_drive_t;
-struct cdrom_paranoia_t;
-struct SNDFILE;
+// NOTE: CdIo_t, cdrom_drive_t, cdrom_paranoia_t and SNDFILE are defined
+// via typedef in <cdio/cdio.h>, <cdio/paranoia/cdda.h> and <sndfile.h>.
+// Do NOT re-declare them with 'struct' here — it causes a typedef-vs-struct clash.
+// They are included transitively through raii_wrappers.h.
 
 namespace Aegis {
 
@@ -64,16 +65,22 @@ struct RipResult {
     int errorsEncountered{0};
 };
 
-// ============================================================================
-// Result Type (forward declaration)
-// ============================================================================
-
-template<typename T>
-class Result;
+// Result<T,E> is defined in raii_wrappers.h (2 template params). Do not re-declare here.
 
 // ============================================================================
 // DiscRipper - Main API for disc operations
 // ============================================================================
+
+class DiscLogger {
+public:
+    explicit DiscLogger(const QString& name) : m_name(name) {}
+    void info(const QString& msg)    const { qInfo()    << "[" << m_name << "]" << msg; }
+    void debug(const QString& msg)   const { qDebug()   << "[" << m_name << "]" << msg; }
+    void warning(const QString& msg) const { qWarning() << "[" << m_name << "]" << msg; }
+    void error(const QString& msg)   const { qCritical()<< "[" << m_name << "]" << msg; }
+private:
+    QString m_name;
+};
 
 class DiscRipper : public QObject {
     Q_OBJECT

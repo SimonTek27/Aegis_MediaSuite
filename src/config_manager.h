@@ -9,6 +9,7 @@
 #include <QStandardPaths>
 #include <QHash>
 #include <QMutex>
+#include <QStack>
 #include <shared_mutex>
 #include <optional>
 #include <any>
@@ -107,7 +108,7 @@ public:
         
         auto it = m_config.find(key);
         if (it != m_config.end()) {
-            auto value = it->second.template get<T>();
+            auto value = it->template get<T>();
             if (value) return *value;
         }
         
@@ -282,7 +283,7 @@ private:
     ConfigManager(QObject* parent = nullptr) : QObject(parent) {
         // Auto-save every 5 minutes
         m_autoSaveTimer.setInterval(5 * 60 * 1000);
-        connect(&m_autoSaveTimer, &QTimer::timeout, this, &ConfigManager::save);
+        connect(&m_autoSaveTimer, &QTimer::timeout, this, [this]() { save(); });
         m_autoSaveTimer.start();
     }
 

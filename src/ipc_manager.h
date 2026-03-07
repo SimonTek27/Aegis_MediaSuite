@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
+#include <QCoreApplication>
 #include <QUrl>
 #include <memory>
 #include <variant>
@@ -299,8 +300,8 @@ namespace Aegis {
             if (type == "file_open") {
                 IpcFileOpenMessage msg;
                 QJsonArray files = root["files"].toArray();
-                for (const auto& f : files) {
-                    msg.files.append(f.toString());
+                for (int _i = 0; _i < files.size(); ++_i) {
+                    msg.files.append(files.at(_i).toString());
                 }
                 msg.suggestedMode = root["mode"].toString();
                 return msg;

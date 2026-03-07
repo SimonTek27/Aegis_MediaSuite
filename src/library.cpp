@@ -172,7 +172,7 @@ namespace Aegis {
             };
             QDirIterator it(canonicalPath, filters, QDir::Files, QDirIterator::Subdirectories);
 
-            std::vector<Track> batch;
+            std::vector<LibraryTrack> batch;
             batch.reserve(100);
             int processed = 0;
             int added     = 0;
@@ -180,7 +180,7 @@ namespace Aegis {
 
             while (it.hasNext() && !m_cancelScan.load()) {
                 QString file = it.next();
-                Track t;
+                LibraryTrack t;
                 if (extractMetadata(file, t)) {
                     batch.push_back(t);
                     ++added;
@@ -213,7 +213,7 @@ namespace Aegis {
         m_cancelScan.store(true);
     }
 
-    bool Library::extractMetadata(const QString &path, Track &outTrack)
+    bool Library::extractMetadata(const QString &path, LibraryTrack &outTrack)
     {
         try {
             TagLib::FileRef f(path.toUtf8().constData());
@@ -261,7 +261,7 @@ namespace Aegis {
      *   - m_trackCount viene incrementato solo per le righe effettivamente inserite.
      *   - Verifica il risultato di db.commit() e logga eventuali errori.
      */
-    void Library::processBatch(const std::vector<Track> &tracks)
+    void Library::processBatch(const std::vector<LibraryTrack> &tracks)
     {
         auto db = m_pool->acquire();
         if (!db.isOpen()) {
@@ -317,11 +317,11 @@ namespace Aegis {
         m_pool->release(db);
     }
 
-    QFuture<std::vector<Track>> Library::search(const QString &query, int limit)
+    QFuture<std::vector<LibraryTrack>> Library::search(const QString &query, int limit)
     {
-        return QtConcurrent::run([this, query, limit]() -> std::vector<Track> {
+        return QtConcurrent::run([this, query, limit]() -> std::vector<LibraryTrack> {
             auto db = m_pool->acquire();
-            std::vector<Track> results;
+            std::vector<LibraryTrack> results;
 
             if (!db.isOpen()) {
                 m_pool->release(db);
@@ -346,7 +346,7 @@ namespace Aegis {
 
             if (q.exec()) {
                 while (q.next()) {
-                    Track t;
+                    LibraryTrack t;
                     t.id      = q.value(0).toInt();
                     t.path    = q.value(1).toString();
                     t.title   = q.value(2).toString();
@@ -436,6 +436,19 @@ namespace Aegis {
     {
         Q_UNUSED(album)
         return QString();
+    }
+
+    QFuture<bool> Library::deleteTrack(int trackId) {
+        return QtConcurrent::run([this, trackId]() -> bool {
+            auto db = m_pool->acquire();
+            if (!db.isValid()) return false;
+            QSqlQuery q(db);
+            q.prepare(QStringLiteral("DELETE FROM tracks WHERE id = ?"));
+            q.addBindValue(trackId);
+            bool ok = q.exec();
+            m_pool->release(db);
+            return ok;
+        });
     }
 
 } // namespace Aegis

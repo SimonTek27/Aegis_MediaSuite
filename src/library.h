@@ -21,7 +21,7 @@ class QSqlDatabase;
 
 namespace Aegis {
 
-    struct Track {
+    struct LibraryTrack {
         int id{-1};
         QString path;
         QString title;
@@ -46,12 +46,12 @@ namespace Aegis {
         explicit Library(const QString &dbPath, QObject *parent = nullptr);
         ~Library() override;
 
-        QFuture<std::vector<Track>> search(const QString &query, int limit = 100);
-        QFuture<std::vector<Track>> getAllTracks();
-        QFuture<bool> insertTrack(const Track &track);
+        QFuture<std::vector<LibraryTrack>> search(const QString &query, int limit = 100);
+        void getAllTracks();  // async; results emitted via tracksFound()
+        QFuture<bool> insertTrack(const LibraryTrack &track);
         QFuture<bool> deleteTrack(int trackId);
-        QFuture<bool> updateTrack(const Track &track);
-        QFuture<QVector<Track>> searchAlbumTracks(const QString& album);
+        QFuture<bool> updateTrack(const LibraryTrack &track);
+        QFuture<QVector<LibraryTrack>> searchAlbumTracks(const QString& album);
         QString coverArtPath(const QString& album);
 
         Q_INVOKABLE void scanDirectory(const QString &path);
@@ -67,14 +67,14 @@ namespace Aegis {
         void trackCountChanged(int count);
         void scanProgress(int current, int total);
         void scanCompleted(int added, int errors);
-        void tracksReady(const std::vector<Track> &tracks);
+        void tracksReady(const std::vector<LibraryTrack> &tracks);
         void tracksFound(const QVariantList &tracks);
         void error(const QString &message);
 
     private:
         bool initializeSchema();
-        bool extractMetadata(const QString &path, Track &outTrack);
-        void processBatch(const std::vector<Track> &batch);
+        bool extractMetadata(const QString &path, LibraryTrack &outTrack);
+        void processBatch(const std::vector<LibraryTrack> &batch);
 
         class ConnectionPool {
             static constexpr int MaxConnections = 4;

@@ -41,6 +41,15 @@
 
 namespace Aegis {
 
+    // Minimal AudioEffectChain definition (effects pipeline for a track)
+    class AudioEffectChain {
+    public:
+        AudioEffectChain() = default;
+        virtual ~AudioEffectChain() = default;
+        // TODO: add effects chain API
+    };
+
+
     // Forward declarations
     struct mpv_handle;
     struct mpv_render_context;
@@ -145,7 +154,7 @@ namespace Aegis {
         QString videoCodec = "libx264";
         QString audioCodec = "aac";
         QString container = "mp4";
-        QString preset = "medium";
+        QString presetName = "medium";
         bool useHardwareEncoding = false;
         bool twoPass = false;
 
@@ -278,7 +287,7 @@ namespace Aegis {
     // Track (Video or Audio track on timeline)
     // =============================================================================
 
-    class Track : public QObject {
+    class VideoTrack : public QObject {
         Q_OBJECT
         Q_PROPERTY(QString id READ id CONSTANT)
         Q_PROPERTY(QString name READ name WRITE setName NOTIFY nameChanged)
@@ -294,7 +303,7 @@ namespace Aegis {
         enum class Type { Video, Audio };
         Q_ENUM(Type)
 
-        explicit Track(const QString& id, Type type, const QString& name,
+        explicit VideoTrack(const QString& id, Type type, const QString& name,
                        QObject* parent = nullptr);
 
         QString id() const { return m_id; }
@@ -398,12 +407,12 @@ namespace Aegis {
 
         // Composite frame from tracks at given time
         QOpenGLFramebufferObject* compositeFrame(const Timecode& time,
-                                                 const std::vector<Track*>& videoTracks,
-                                                 const std::vector<Track*>& audioTracks);
+                                                 const std::vector<VideoTrack*>& videoTracks,
+                                                 const std::vector<VideoTrack*>& audioTracks);
 
         // Render to image (for export/thumbnails)
         QImage renderImage(const Timecode& time,
-                           const std::vector<Track*>& videoTracks,
+                           const std::vector<VideoTrack*>& videoTracks,
                            const QSize& targetSize);
 
         // Direct OpenGL access
@@ -428,7 +437,7 @@ namespace Aegis {
         void createGeometry();
         void renderClip(std::shared_ptr<MediaClip> clip, const Timecode& time,
                         QOpenGLFramebufferObject* target);
-        void blendTracks(const std::vector<Track*>& tracks, const Timecode& time);
+        void blendTracks(const std::vector<VideoTrack*>& tracks, const Timecode& time);
 
         ProjectProfile m_profile;
         bool m_initialized = false;
@@ -655,23 +664,23 @@ namespace Aegis {
         TimelineProxy* timeline() const { return m_timeline.get(); }
 
         // ============== Track Management ==============
-        Track* addVideoTrack(const QString& name = QString());
-        Track* addAudioTrack(const QString& name = QString());
-        void removeTrack(Track* track);
+        VideoTrack* addVideoTrack(const QString& name = QString());
+        VideoTrack* addAudioTrack(const QString& name = QString());
+        void removeTrack(VideoTrack* track);
         void moveTrack(int fromIndex, int toIndex);
 
-        QList<Track*> videoTracks() const;
-        QList<Track*> audioTracks() const;
-        QList<Track*> allTracks() const;
-        Track* trackAt(int index) const;
+        QList<VideoTrack*> videoTracks() const;
+        QList<VideoTrack*> audioTracks() const;
+        QList<VideoTrack*> allTracks() const;
+        VideoTrack* trackAt(int index) const;
 
         // ============== Clip Operations ==============
         Q_INVOKABLE std::shared_ptr<MediaClip> importMedia(const QUrl& url,
-                                                           Track* targetTrack = nullptr,
+                                                           VideoTrack* targetTrack = nullptr,
                                                            const Timecode& position = Timecode{0, 30});
         Q_INVOKABLE void removeClip(std::shared_ptr<MediaClip> clip);
         Q_INVOKABLE void moveClip(std::shared_ptr<MediaClip> clip,
-                                  Track* targetTrack,
+                                  VideoTrack* targetTrack,
                                   const Timecode& newPosition);
         Q_INVOKABLE void trimClip(std::shared_ptr<MediaClip> clip,
                                   const Timecode& newInPoint,
@@ -738,8 +747,8 @@ namespace Aegis {
         void positionChanged(const Timecode& position);
         void durationChanged(const Timecode& duration);
         void modifiedChanged();
-        void trackAdded(Track* track);
-        void trackRemoved(Track* track);
+        void trackAdded(VideoTrack* track);
+        void trackRemoved(VideoTrack* track);
         void clipImported(std::shared_ptr<MediaClip> clip);
         void frameReady(const QImage& frame, const Timecode& position);
         void exportProgress(double percent);
@@ -810,6 +819,6 @@ Q_DECLARE_METATYPE(Aegis::ProjectProfile)
 Q_DECLARE_METATYPE(Aegis::ExportSettings)
 Q_DECLARE_METATYPE(Aegis::ExportPreset)
 Q_DECLARE_METATYPE(Aegis::MediaClip*)
-Q_DECLARE_METATYPE(Aegis::Track*)
+Q_DECLARE_METATYPE(Aegis::VideoTrack*)
 Q_DECLARE_METATYPE(Aegis::VideoCompositor::BlendMode)
 Q_DECLARE_METATYPE(Aegis::TimelineProxy*)

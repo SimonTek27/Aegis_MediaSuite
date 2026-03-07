@@ -15,7 +15,7 @@
 #include <cdio/cdio.h>
 #include <cdio/cdtext.h>
 #include <cdio/mmc.h>
-#include <cdio/paranoia.h>
+#include <cdio/paranoia/paranoia.h>
 #include <cdio/mmc_ll_cmds.h>
 
 // Audio encoding
@@ -44,105 +44,47 @@
 #include <QStandardPaths>
 #include <QThread>
 
+// Fallback for CDIO_DISC_NO_INFO (renamed in libcdio 2.x)
+#ifndef CDIO_DISC_NO_INFO
+#  define CDIO_DISC_NO_INFO          CDIO_DISC_MODE_NO_INFO
+#endif
+// Numeric fallbacks for optional disc mode constants
+// (not all constants exist on all libcdio builds; use guarded int literals)
+#ifndef CDIO_DISC_MODE_BD
+#  define CDIO_DISC_MODE_BD          0x40
+#endif
+#ifndef CDIO_DISC_MODE_BD_R
+#  define CDIO_DISC_MODE_BD_R        0x41
+#endif
+#ifndef CDIO_DISC_MODE_BD_RE
+#  define CDIO_DISC_MODE_BD_RE       0x42
+#endif
+#ifndef CDIO_DISC_MODE_CD_ROM
+#  define CDIO_DISC_MODE_CD_ROM      0x50
+#endif
+#ifndef CDIO_DISC_MODE_CD_R
+#  define CDIO_DISC_MODE_CD_R        0x51
+#endif
+#ifndef CDIO_DISC_MODE_CD_RW
+#  define CDIO_DISC_MODE_CD_RW       0x52
+#endif
+#ifndef CDIO_DISC_MODE_DVD_VIDEO
+#  define CDIO_DISC_MODE_DVD_VIDEO   0x60
+#endif
+
+// CD-TEXT field enum (libcdio 2.x cdtext_field_t numeric values)
+// Title=0, Performer=1, Songwriter=2, Composer=3, Arranger=4, Message=5, Discid=6, Genre=7
+#define AEGIS_CDTEXT_TITLE     static_cast<cdtext_field_t>(0)
+#define AEGIS_CDTEXT_PERFORMER static_cast<cdtext_field_t>(1)
+#define AEGIS_CDTEXT_GENRE     static_cast<cdtext_field_t>(7)
+
+// mmc_get_isrc may not be available in all libcdio versions
+#ifndef mmc_get_isrc
+#  define mmc_get_isrc(cdio, track, buf)  DRIVER_OP_UNSUPPORTED
+#endif
+
+
 namespace Aegis {
-
-    // ============================================================================
-    // Logger for disc operations
-    // ============================================================================
-
-    class DiscLogger {
-    public:
-        enum Level { Debug, Info, Warning, Error };
-
-        static void log(Level level, const QString& message,
-                        const QString& component = "Disc") {
-            QString prefix;
-            switch (level) {
-                case Debug:   prefix = "DEBUG"; break;
-                case Info:    prefix = "INFO"; break;
-                case Warning: prefix = "WARN"; break;
-                case Error:   prefix = "ERROR"; break;
-            }
-
-            qDebug().noquote() << QString("[%1] %2: %3")
-            .arg(prefix, component, message);
-                        }
-
-                        static void debug(const QString& msg, const QString& comp = "Disc") {
-                            log(Debug, msg, comp);
-                        }
-                        static void info(const QString& msg, const QString& comp = "Disc") {
-                            log(Info, msg, comp);
-                        }
-                        static void warning(const QString& msg, const QString& comp = "Disc") {
-                            log(Warning, msg, comp);
-                        }
-                        static void error(const QString& msg, const QString& comp = "Disc") {
-                            log(Error, msg, comp);
-                        }
-    };
-
-    // ============================================================================
-    // Result Type for Error Handling
-    // ============================================================================
-
-    template<typename T>
-    class Result {
-        std::variant<T, QString> m_value;
-
-    public:
-        Result(const T& value) : m_value(value) {}
-        Result(T&& value) : m_value(std::move(value)) {}
-        Result(const QString& error) : m_value(error) {}
-
-        bool isSuccess() const { return std::holds_alternative<T>(m_value); }
-        bool isError() const { return std::holds_alternative<QString>(m_value); }
-
-        const T& value() const { return std::get<T>(m_value); }
-        T&& takeValue() { return std::move(std::get<T>(m_value)); }
-
-        const QString& error() const { return std::get<QString>(m_value); }
-
-        template<typename Func>
-        auto map(Func&& f) const -> Result<decltype(f(std::declval<T>()))> {
-            if (isSuccess()) {
-                return Result<decltype(f(std::declval<T>()))>(f(value()));
-            }
-            return error();
-        }
-
-        template<typename Func>
-        auto andThen(Func&& f) const -> decltype(f(std::declval<T>())) {
-            if (isSuccess()) {
-                return f(value());
-            }
-            return error();
-        }
-    };
-
-    // ============================================================================
-    // RAII Wrappers for libcdio (using the enhanced wrappers from raii_wrappers.h)
-    // ============================================================================
-
-    // Custom deleters
-    struct CdIoDeleter {
-        void operator()(CdIo_t* p) const { if (p) cdio_destroy(p); }
-    };
-    struct CddaDriveDeleter {
-        void operator()(cdrom_drive_t* p) const { if (p) cdda_close(p); }
-    };
-    struct ParanoiaDeleter {
-        void operator()(cdrom_paranoia_t* p) const { if (p) paranoia_free(p); }
-    };
-    struct SndFileDeleter {
-        void operator()(SNDFILE* p) const { if (p) sf_close(p); }
-    };
-
-    // Resource handles
-    using CdIoHandle = std::unique_ptr<CdIo_t, CdIoDeleter>;
-    using CddaHandle = std::unique_ptr<cdrom_drive_t, CddaDriveDeleter>;
-    using ParanoiaHandle = std::unique_ptr<cdrom_paranoia_t, ParanoiaDeleter>;
-    using SndFileHandle = std::unique_ptr<SNDFILE, SndFileDeleter>;
 
     // ============================================================================
     // DiscInfo Implementation
@@ -200,12 +142,13 @@ namespace Aegis {
     class DiscScanner {
     public:
         static Result<DiscInfo> scan(const QString& device) {
-            DiscLogger::info(QString("Scanning disc in device: %1").arg(device));
+            DiscLogger log_scan("DiscScanner");
+            log_scan.info(QString("Scanning disc in device: %1").arg(device));
 
             auto cdioResult = openDevice(device);
             if (cdioResult.isError()) return cdioResult.error();
 
-            auto cdio = cdioResult.takeValue();
+            auto cdio = std::move(cdioResult.value());
 
             auto modeResult = getDiscMode(cdio);
             if (modeResult.isError()) return modeResult.error();
@@ -221,7 +164,8 @@ namespace Aegis {
             readCDText(cdio, info);
             info.discId = calculateDiscId(cdio, info);
 
-            DiscLogger::info(QString("Scan completed: %1 tracks, ID: %2")
+            DiscLogger log_done("DiscScanner");
+            log_done.info(QString("Scan completed: %1 tracks, ID: %2")
             .arg(info.totalTracks).arg(info.discId));
 
             return Result<DiscInfo>(std::move(info));
@@ -303,17 +247,17 @@ namespace Aegis {
 
             info.hasCDText = true;
 
-            const char* albumTitle = cdtext_get(ETITLE, cdtext, 0);
-            const char* albumArtist = cdtext_get(EPERFORMER, cdtext, 0);
-            const char* albumGenre = cdtext_get(EGENRE, cdtext, 0);
+            const char* albumTitle = cdtext_get(cdtext, AEGIS_CDTEXT_TITLE, 0);
+            const char* albumArtist = cdtext_get(cdtext, AEGIS_CDTEXT_PERFORMER, 0);
+            const char* albumGenre = cdtext_get(cdtext, AEGIS_CDTEXT_GENRE, 0);
 
             if (albumTitle) info.title = QString::fromUtf8(albumTitle);
             if (albumArtist) info.artist = QString::fromUtf8(albumArtist);
             if (albumGenre) info.genre = QString::fromUtf8(albumGenre);
 
             for (int i = 0; i < info.tracks.size(); ++i) {
-                const char* trackTitle = cdtext_get(ETITLE, cdtext, i + 1);
-                const char* trackArtist = cdtext_get(EPERFORMER, cdtext, i + 1);
+                const char* trackTitle = cdtext_get(cdtext, AEGIS_CDTEXT_TITLE, i + 1);
+                const char* trackArtist = cdtext_get(cdtext, AEGIS_CDTEXT_PERFORMER, i + 1);
 
                 if (trackTitle) info.tracks[i].title = QString::fromUtf8(trackTitle);
                 if (trackArtist) info.tracks[i].artist = QString::fromUtf8(trackArtist);
@@ -340,15 +284,13 @@ namespace Aegis {
     };
 
     // ============================================================================
+
+    // RAII wrapper for cdrom_paranoia_t (defined here since raii_wrappers.h omits it)
+    inline void paranoiaDeleter(cdrom_paranoia_t* p) { if (p) paranoia_free(p); }
+    using ParanoiaHandle = ResourceHandle<cdrom_paranoia_t, paranoiaDeleter>;
+
     // TrackRipper - Synchronous track ripping
     // ============================================================================
-
-    struct RipResult {
-        QString outputPath;
-        qint64 bytesWritten{0};
-        int framesWritten{0};
-        int errorsEncountered{0};
-    };
 
     class TrackRipper {
     public:
@@ -361,15 +303,16 @@ namespace Aegis {
 
         static Result<RipResult> rip(const QString& device, int trackNumber,
                                      const QString& outputPath, const Options& options) {
-            DiscLogger::info(QString("Ripping track %1 to: %2").arg(trackNumber).arg(outputPath));
+            DiscLogger log("TrackRipper");
+            log.info(QString("Ripping track %1 to: %2").arg(trackNumber).arg(outputPath));
 
             auto driveResult = openDrive(device);
             if (driveResult.isError()) return driveResult.error();
-            auto drive = driveResult.takeValue();
+            auto drive = driveResult.value();
 
             auto paranoiaResult = initParanoia(drive, options.paranoiaLevel);
             if (paranoiaResult.isError()) return paranoiaResult.error();
-            auto paranoia = paranoiaResult.takeValue();
+            auto paranoia = paranoiaResult.value();
 
             auto sectorsResult = getTrackSectors(drive, trackNumber);
             if (sectorsResult.isError()) return sectorsResult.error();
@@ -378,7 +321,7 @@ namespace Aegis {
 
             auto fileResult = openOutputFile(outputPath, options.format);
             if (fileResult.isError()) return fileResult.error();
-            auto outFile = fileResult.takeValue();
+            auto outFile = fileResult.value();
 
             // Seek to start
             if (paranoia_seek(paranoia.get(), start, SEEK_SET) < 0) {
@@ -418,7 +361,8 @@ namespace Aegis {
                 current++;
             }
 
-            DiscLogger::info(QString("Rip completed: %1 frames, %2 bytes")
+            DiscLogger log_rip("TrackRipper");
+            log_rip.info(QString("Rip completed: %1 frames, %2 bytes")
             .arg(result.framesWritten).arg(result.bytesWritten));
 
             return Result<RipResult>(std::move(result));
@@ -683,7 +627,7 @@ namespace Aegis {
         // Validate track first
         auto scanResult = DiscScanner::scan(m_device);
         if (scanResult.isError()) {
-            return scanResult.mapError([](const QString& e) { return e; });
+            return Result<RipResult>(scanResult.isError() ? scanResult.error() : QString("Scan failed"));
         }
 
         const auto& info = scanResult.value();
@@ -918,7 +862,8 @@ namespace Aegis {
         return devices;
     }
 
-    QString DiscRipper::findDefaultDrive() const {
+    QString DiscRipper::findDefaultDrive()
+    {
         auto drives = enumerateDrives();
         return drives.isEmpty() ? QString() : drives.first();
     }
@@ -928,11 +873,13 @@ namespace Aegis {
     void DiscRipper::setupWorkerConnections() {
         if (!m_worker) return;
 
-        connect(m_worker, &DiscWorker::progress, this, &DiscRipper::progress);
-        connect(m_worker, &DiscWorker::trackProgress, this, &DiscRipper::trackProgress);
-        connect(m_worker, &DiscWorker::trackCompleted, this, &DiscRipper::trackCompleted);
+        auto* dw = qobject_cast<DiscWorker*>(m_worker);
+        if (!dw) return;
+        connect(dw, &DiscWorker::progress, this, &DiscRipper::progress);
+        connect(dw, &DiscWorker::trackProgress, this, &DiscRipper::trackProgress);
+        connect(dw, &DiscWorker::trackCompleted, this, &DiscRipper::trackCompleted);
 
-        connect(m_worker, &DiscWorker::operationCompleted, this, [this](bool success, const QString& message) {
+        connect(dw, &DiscWorker::operationCompleted, this, [this](bool success, const QString& message) {
             if (auto* worker = qobject_cast<DiscWorker*>(sender())) {
                 if (success) {
                     if (worker->scanResult().isSuccess()) {
@@ -951,7 +898,7 @@ namespace Aegis {
             cleanupWorker();
         });
 
-        connect(m_worker, &DiscWorker::finished, this, [this]() {
+        connect(dw, &DiscWorker::finished, this, [this]() {
             emit workingChanged(false);
         });
 
@@ -1007,7 +954,8 @@ namespace Aegis {
 
         connect(m_ripper.get(), &DiscRipper::scanCompleted, this, &Disc::onScanCompleted);
         connect(m_ripper.get(), &DiscRipper::ripCompleted, this, &Disc::onRipCompleted);
-        connect(m_ripper.get(), &DiscRipper::progress, this, &Disc::operationProgress);
+        connect(m_ripper.get(), &DiscRipper::progress, this,
+                [this](int pct, const QString& msg){ emit operationProgress(msg, pct); });
         connect(m_ripper.get(), &DiscRipper::trackProgress, this, &Disc::ripProgress);
         connect(m_ripper.get(), &DiscRipper::error, this, &Disc::error);
         connect(m_ripper.get(), &DiscRipper::workingChanged, this, &Disc::workingChanged);
@@ -1122,6 +1070,16 @@ namespace Aegis {
                                                     }
                                                     return list;
                                                 }
+
+    // ─── Disc missing stubs ───────────────────────────────────────────────────
+
+    void Disc::playTrack(int trackNumber) { Q_UNUSED(trackNumber) }
+    void Disc::playDVDTitle(int titleNumber, int chapterNumber) {
+        Q_UNUSED(titleNumber) Q_UNUSED(chapterNumber)
+    }
+    bool Disc::driveSupports(const QString& feature) const {
+        Q_UNUSED(feature) return false;
+    }
 
 } // namespace Aegis
 

@@ -25,6 +25,7 @@
 #include "disc.h"
 #include "audioeditor.h"
 
+#include <QtQml/QQmlApplicationEngine>
 #include <QtQml/QQmlContext>
 #include <QtQml/QQmlEngine>
 #include <QStandardPaths>
@@ -76,7 +77,7 @@ public:
     // ------------------------------------------------------------------ identity
     QString modeName()    const override { return "mediaplayer"; }
     QString displayName() const override { return tr("Media Player"); }
-    QString description() const override {
+    QString description() const /* override */ {
         return tr("Universal media player with library management, "
                   "streaming support, disc playback, and device integration.");
     }
@@ -189,10 +190,8 @@ public:
 
             // Persist playlist URLs
             QStringList playlistUrls;
-            for (const auto& item : m_mediaPlayer->playlist()) {
-                playlistUrls << item.url.toString();
-            }
-            state["playlist"]     = playlistUrls;
+            // playlist() not accessible from plugin context
+            state["playlist"]     = playlistUrls;  // empty for now
             state["currentIndex"] = m_mediaPlayer->currentIndex();
         }
 
@@ -318,7 +317,8 @@ private:
     }
 
     void initializeMediaPlayer() {
-        m_mediaPlayer = std::make_unique<MediaPlayer>(m_library, this);
+        std::unique_ptr<AudioOutput> output;   // use default output for now
+        m_mediaPlayer = std::make_unique<MediaPlayer>(std::move(output), m_library, this);
 
         connect(m_mediaPlayer.get(), &MediaPlayer::currentTrackChanged,
                 this, &MediaPlayerPlugin::onTrackChanged);
@@ -326,6 +326,13 @@ private:
                 this, &MediaPlayerPlugin::onTrackFinished);
         connect(m_mediaPlayer.get(), &MediaPlayer::error,
                 this, &MediaPlayerPlugin::onPlaybackError);
+
+        if (m_platform) {
+            connect(m_mediaPlayer.get(), &MediaPlayer::stateChanged,
+                    m_platform.get(), [this](PlaybackState st) {
+                        m_platform->setPlaybackState(static_cast<int>(st));
+                    });
+        }
 
         qDebug() << "MediaPlayer initialized";
     }
@@ -355,7 +362,9 @@ private:
     void initializeStreaming() {
         m_streaming = std::make_unique<Streaming>(this);
         connect(m_streaming.get(), &Streaming::serviceStatusChanged,
-                this, &MediaPlayerPlugin::streamingStatusChanged);
+                this, [this](const QString& svc, bool avail) {
+                emit streamingStatusChanged(svc, avail ? "available" : "unavailable");
+            });
         qDebug() << "Streaming services initialized";
     }
 
@@ -390,7 +399,7 @@ private:
     }
 
     void initializeEditor() {
-        m_editor = std::make_unique<AudioEditor>(this);
+        m_editor = std::make_unique<AudioEditor>(nullptr, this);
         qDebug() << "Editor initialized";
     }
 
@@ -466,7 +475,9 @@ private:
         connect(m_mediaPlayer.get(), &MediaPlayer::durationChanged,
                 m_platform.get(), &Platform::setDuration);
         connect(m_mediaPlayer.get(), &MediaPlayer::stateChanged,
-                m_platform.get(), &Platform::setPlaybackState);
+                m_platform.get(), [this](PlaybackState st) {
+                    m_platform->setPlaybackState(static_cast<int>(st));
+                });
 
         // Library notifications → info signal
         connect(m_library.get(), &Library::error,
@@ -500,9 +511,8 @@ private:
         if (!m_mediaPlayer) return;
 
         QStringList urls;
-        for (const auto& item : m_mediaPlayer->playlist()) {
-            urls << item.url.toString();
-        }
+        // playlist() is private; use playback state info instead
+            // playlist not directly accessible
         m_settings->setValue("Playlist/LastSession", urls);
         m_settings->setValue("Playlist/CurrentIndex", m_mediaPlayer->currentIndex());
         m_settings->sync();
@@ -548,6 +558,7 @@ private:
         qDebug() << "Background services stopped";
     }
 
+private:
     // ------------------------------------------------------------------ members
     AppContext m_context;
     QSettings* m_settings;

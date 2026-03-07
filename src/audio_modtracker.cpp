@@ -1,3 +1,4 @@
+#include "audio_daw.h"
 // modtracker.cpp - Fully Integrated MOD Tracker Implementation
 
 #include "audio_modtracker.h"
@@ -365,7 +366,7 @@ namespace Aegis {
                                                       if (tnote.isNoteOn()) {
                                                           Note note;
                                                           note.pitch = Pitch(tnote.note + 24); // Offset to reasonable MIDI range
-                                                          note.duration.type = Duration::Type::Sixteenth;
+                                                          note.duration.type = DurationType::Sixteenth;
                                                           note.tickPosition = row * 120; // 480 PPQ / 4 = 120 per 16th
                                                           note.velocity = tnote.volume > 0 ? tnote.volume * 2 : 100;
                                                           note.voice = ch;

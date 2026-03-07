@@ -2,9 +2,11 @@
 #pragma once
 
 #include <QObject>
+#include <QSystemTrayIcon>
 #include <QString>
 #include <QVariantMap>
 #include <QDBusAbstractAdaptor>
+#include <QtDBus/QDBusObjectPath>
 #include <QPointer>
 
 // Conditional compilation for KDE Framework 6 integration
@@ -59,6 +61,7 @@ public:
     QString playbackStatus() const;      ///< "Playing", "Paused", or "Stopped"
     QVariantMap metadata() const;        ///< Current track metadata
     double volume() const;               ///< Volume level 0.0-1.0
+    void setVolume(double vol);          ///< Set volume 0.0-1.0 (MPRIS2 WRITE)
     qlonglong position() const;          ///< Position in microseconds
 
     // Read-only capability flags
@@ -316,6 +319,15 @@ public:
      */
     Q_INVOKABLE void setAudioOutputDevice(const QString &device);
 
+
+    // ── MediaPlayerPlugin integration ─────────────────────────────────────
+    void setNowPlaying(const QString& title, const QString& artist, const QString& album);
+    void clearNowPlaying();
+    void setPosition(qint64 pos);
+    void setDuration(qint64 dur);
+    void setPlaybackState(int state);
+    static QString findOpticalDrive();
+
 signals:
     /**
      * @brief Emitted when tray visibility changes
@@ -357,6 +369,7 @@ signals:
      * @param device New audio device name
      */
     void audioDeviceChanged(const QString &device);
+
 
 private slots:
     /**
@@ -421,4 +434,4 @@ private:
 };
 
 // Register types for Qt meta-object system
-Q_DECLARE_METATYPE(Aegis::PlaybackState)
+// Q_DECLARE_METATYPE(Aegis::PlaybackState) — already declared in mediaplayer.h

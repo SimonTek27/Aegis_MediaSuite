@@ -1,5 +1,7 @@
 // platform.cpp - Fixed Platform Integration Implementation
 #include "platform.h"
+#include "core.h"
+#include "library.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -307,7 +309,7 @@ int AegisAdminAdaptor::trackCount() const {
 }
 
 bool AegisAdminAdaptor::playing() const {
-    return m_core ? m_core->playing() : false;
+    return m_core ? (m_core->state() == Aegis::PlaybackState::Playing) : false;
 }
 
 double AegisAdminAdaptor::volume() const {
@@ -315,7 +317,9 @@ double AegisAdminAdaptor::volume() const {
 }
 
 QString AegisAdminAdaptor::currentFile() const {
-    return m_core ? m_core->currentFile() : QString();
+    // Core::currentTitle() is private; for now, return empty if not exposed
+    Q_UNUSED(m_core);
+    return QString();
 }
 
 void AegisAdminAdaptor::deleteTrack(int trackId) {
@@ -386,3 +390,72 @@ void AegisAdminAdaptor::setConfig(const QString &key, const QString &value) {
         emit error("Config key not in whitelist: " + key);
     }
 }
+
+// ── findOpticalDrive stub ──────────────────────────────────────────────────
+QString Platform::findOpticalDrive()
+{
+    // TODO: implement proper optical drive detection via libcdio or sysfs
+#if defined(Q_OS_LINUX)
+    // Try common Linux optical drive paths
+    const QStringList candidates = {"/dev/sr0", "/dev/sr1", "/dev/cdrom", "/dev/dvd"};
+    for (const QString& path : candidates) {
+        if (QFileInfo::exists(path))
+            return path;
+    }
+#endif
+    return QString();
+}
+
+// ── MediaPlayerPlugin integration stubs ──────────────────────────────────────
+void Platform::setNowPlaying(const QString& title, const QString& artist, const QString& album)
+{
+    Q_UNUSED(title) Q_UNUSED(artist) Q_UNUSED(album)
+    // TODO: update MPRIS2 metadata and system notification
+}
+
+void Platform::clearNowPlaying()
+{
+    // TODO: clear MPRIS2 now-playing state
+}
+
+void Platform::setPosition(qint64 pos)
+{
+    Q_UNUSED(pos)
+    // TODO: update MPRIS2 position
+}
+
+void Platform::setDuration(qint64 dur)
+{
+    Q_UNUSED(dur)
+    // TODO: update MPRIS2 track length
+}
+
+void Platform::setPlaybackState(int state)
+{
+    Q_UNUSED(state)
+    // TODO: map to MPRIS2 PlaybackStatus
+}
+
+// ─── AegisAdminAdaptor missing stubs ─────────────────────────────────────────
+
+QStringList AegisAdminAdaptor::getRecentTracks(int limit) {
+    Q_UNUSED(limit) return {};
+}
+void AegisAdminAdaptor::stop() {
+    if (m_core) m_core->stop();
+}
+void AegisAdminAdaptor::next() {
+    if (m_core) m_core->next();
+}
+void AegisAdminAdaptor::previous() {
+    if (m_core) m_core->previous();
+}
+void AegisAdminAdaptor::seek(double position) {
+    if (m_core) m_core->seek(position);
+}
+void AegisAdminAdaptor::loadFile(const QString &path) {
+    if (m_core) m_core->load(QUrl::fromLocalFile(path));
+}
+void AegisAdminAdaptor::searchLibrary(const QString &query) { Q_UNUSED(query) }
+void AegisAdminAdaptor::reloadLibrary() {}
+void AegisAdminAdaptor::clearCache() {}

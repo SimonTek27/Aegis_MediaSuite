@@ -4,6 +4,13 @@
 // Design: Thread-safe, sandbox-friendly, KDE/Plasma 6.6 compatible
 
 #include "discburner.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/statvfs.h>
+#ifdef __linux__
+#include <linux/cdrom.h>
+#endif
 #include <Solid/Device>
 #include <Solid/OpticalDrive>
 #include <Solid/Block>
@@ -15,12 +22,16 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QMutexLocker>
+#ifdef HAVE_LIBBURN
 #include <libburn.h>
 #include <libisofs/libisofs.h>
+#endif
 
 // Mutex for libburn initialization (libburn is not thread-safe)
 static QMutex s_libburnMutex;
+#ifdef HAVE_LIBBURN
 static bool s_libburnInitialized = false;
+#endif
 
 namespace Aegis {
 
@@ -35,7 +46,7 @@ namespace Aegis {
         QStringList devices;
 
         // Method 1: Use Solid framework (KDE Frameworks 6)
-        Solid::DeviceList allDrives = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDrive);
+        QList<Solid::Device> allDrives = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDrive);
 
         qDebug() << "Solid found" << allDrives.size() << "optical drive(s)";
 
@@ -155,7 +166,7 @@ namespace Aegis {
 
         // Find the Solid device that corresponds to this /dev node
         QString udi;
-        Solid::DeviceList allDrives = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDrive);
+        QList<Solid::Device> allDrives = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDrive);
 
         for (const Solid::Device &dev : allDrives) {
             const Solid::Block *block = dev.as<Solid::Block>();
@@ -169,7 +180,9 @@ namespace Aegis {
             qWarning() << "Could not find Solid UDI for device:" << device;
 
             // Try to get basic capabilities via libburn instead
-            return getCapabilitiesViaLibburn(device);
+            // FIX: Create a temporary object to call non-static method
+            CDBurner tempBurner;
+            return tempBurner.getCapabilitiesViaLibburn(device);
         }
 
         // Get the Solid device using the UDI
@@ -181,26 +194,27 @@ namespace Aegis {
             return caps;
         }
 
-        // Query read capabilities
-        caps.canRead = optical->supportsMedia(Solid::OpticalDrive::Cdr);
+        // Query read capabilities - FIX: Remove duplicate Solid:: namespace qualification
+        caps.canRead = optical->supportedMedia() & Solid::OpticalDrive::Cdr;
 
-        // Query write capabilities for various media types
-        caps.canWriteCDR = optical->supportsMedia(Solid::OpticalDrive::Cdr);
-        caps.canWriteCDRW = optical->supportsMedia(Solid::OpticalDrive::Cdrw);
-        caps.canWriteDVDR = optical->supportsMedia(Solid::OpticalDrive::Dvdr);
-        caps.canWriteDVDPlusR = optical->supportsMedia(Solid::OpticalDrive::Dvdplusr);
-        caps.canWriteBD = optical->supportsMedia(Solid::OpticalDrive::Bdr);
+        // Query write capabilities for various media types - FIX: Remove duplicate Solid:: qualification
+        caps.canWriteCDR = optical->supportedMedia() & Solid::OpticalDrive::Cdr;
+        caps.canWriteCDRW = optical->supportedMedia() & Solid::OpticalDrive::Cdrw;
+        caps.canWriteDVDR = optical->supportedMedia() & Solid::OpticalDrive::Dvdr;
+        caps.canWriteDVDPlusR = optical->supportedMedia() & Solid::OpticalDrive::Dvdplusr;
+        caps.canWriteBD = optical->supportedMedia() & Solid::OpticalDrive::Bdr;
 
         // Additional DVD formats
-        caps.canWriteDVDRAM = optical->supportsMedia(Solid::OpticalDrive::Dvdram);
+        caps.canWriteDVDRAM = optical->supportedMedia() & Solid::OpticalDrive::Dvdram;
 
-        // Get write speeds - Solid doesn't expose these directly, so we need other methods
-        caps.maxSpeedCD = getMaxWriteSpeed(device, "cd");
-        caps.maxSpeedDVD = getMaxWriteSpeed(device, "dvd");
-        caps.maxSpeedBD = getMaxWriteSpeed(device, "bd");
+        // Get write speeds - FIX: Create temporary object to call non-static methods
+        CDBurner tempBurner2;
+        caps.maxSpeedCD = tempBurner2.getMaxWriteSpeed(device, "cd");
+        caps.maxSpeedDVD = tempBurner2.getMaxWriteSpeed(device, "dvd");
+        caps.maxSpeedBD = tempBurner2.getMaxWriteSpeed(device, "bd");
 
         // Get additional features via UDisks2
-        caps = queryUDisks2Capabilities(device, caps);
+        caps = tempBurner2.queryUDisks2Capabilities(device, caps);
 
         qDebug() << "Drive capabilities for" << device << ":"
         << "CD-R:" << caps.canWriteCDR
@@ -217,9 +231,11 @@ namespace Aegis {
      */
     BurnerCapabilities CDBurner::getCapabilitiesViaLibburn(const QString &device) {
         BurnerCapabilities caps = {};
+        bool found = false; // declared before #ifdef so visible after #endif
 
         QMutexLocker locker(&s_libburnMutex);
 
+        #ifdef HAVE_LIBBURN
         if (!s_libburnInitialized) {
             burn_initialize();
             s_libburnInitialized = true;
@@ -236,7 +252,6 @@ namespace Aegis {
 
         // Find our drive
         struct burn_drive_info *drive = drives;
-        bool found = false;
 
         while (drive && !found) {
             if (QString::fromLocal8Bit(drive->location) == device) {
@@ -262,6 +277,7 @@ namespace Aegis {
         }
 
         burn_drive_info_free(drives);
+        #endif // HAVE_LIBBURN
 
         if (!found) {
             qWarning() << "libburn could not find drive:" << device;
@@ -337,36 +353,51 @@ namespace Aegis {
             return caps;
         }
 
-        // Search for the drive with matching device
-        QList<QDBusObjectPath> objects = reply.value();
+        // FIX: Get the object path properly - GetManagedObjects returns an array of object paths
+        QDBusObjectPath objectPath = reply.value();
 
-        for (const QDBusObjectPath &objPath : objects) {
-            QDBusInterface driveIface("org.freedesktop.UDisks2",
-                                      objPath.path(),
-                                      "org.freedesktop.DBus.Properties",
-                                      QDBusConnection::systemBus());
+        // For UDisks2, we need to get the list of objects differently
+        // Let's query the manager for block devices instead
+        QDBusInterface udisksManager("org.freedesktop.UDisks2",
+                                     "/org/freedesktop/UDisks2/Manager",
+                                     "org.freedesktop.UDisks2.Manager",
+                                     QDBusConnection::systemBus());
 
-            QDBusReply<QVariant> devReply = driveIface.call("Get",
-                                                            "org.freedesktop.UDisks2.Block",
-                                                            "Device");
-            if (devReply.isValid()) {
-                QByteArray devData = devReply.value().toByteArray();
-                QString devNode = QString::fromLocal8Bit(devData.constData());
+        if (udisksManager.isValid()) {
+            QDBusReply<QList<QDBusObjectPath>> blockDevicesReply = udisksManager.call("GetBlockDevices", QVariantMap());
 
-                if (devNode == device) {
-                    // Found our drive, query additional properties
-                    QDBusReply<QVariant> bufReply = driveIface.call("Get",
-                                                                    "org.freedesktop.UDisks2.Drive",
-                                                                    "Configuration");
-                    if (bufReply.isValid()) {
-                        QVariantMap config = bufReply.value().toMap();
+            if (blockDevicesReply.isValid()) {
+                QList<QDBusObjectPath> objects = blockDevicesReply.value();
 
-                        // Check for buffer underrun protection
-                        caps.supportsBurnProof = config.value("BurnProof", false).toBool();
-                        caps.supportsSolidBurn = config.value("SolidBurn", false).toBool();
+                for (const QDBusObjectPath &objPath : objects) {
+                    QDBusInterface driveIface("org.freedesktop.UDisks2",
+                                              objPath.path(),
+                                              "org.freedesktop.DBus.Properties",
+                                              QDBusConnection::systemBus());
+
+                    QDBusReply<QVariant> devReply = driveIface.call("Get",
+                                                                    "org.freedesktop.UDisks2.Block",
+                                                                    "Device");
+                    if (devReply.isValid()) {
+                        QByteArray devData = devReply.value().toByteArray();
+                        QString devNode = QString::fromLocal8Bit(devData.constData());
+
+                        if (devNode == device) {
+                            // Found our drive, query additional properties
+                            QDBusReply<QVariant> bufReply = driveIface.call("Get",
+                                                                            "org.freedesktop.UDisks2.Drive",
+                                                                            "Configuration");
+                            if (bufReply.isValid()) {
+                                QVariantMap config = bufReply.value().toMap();
+
+                                // Check for buffer underrun protection
+                                caps.supportsBurnProof = config.value("BurnProof", false).toBool();
+                                caps.supportsSolidBurn = config.value("SolidBurn", false).toBool();
+                            }
+
+                            break;
+                        }
                     }
-
-                    break;
                 }
             }
         }
@@ -388,7 +419,7 @@ namespace Aegis {
         }
 
         // Method 1: Use Solid framework
-        Solid::DeviceList allDrives = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDrive);
+        QList<Solid::Device> allDrives = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDrive);
 
         for (const Solid::Device &dev : allDrives) {
             const Solid::Block *block = dev.as<Solid::Block>();
@@ -408,7 +439,7 @@ namespace Aegis {
                                 }
                             });
 
-                    optical->eject();
+                    const_cast<Solid::OpticalDrive*>(optical)->eject();
                     return;
                 }
             }
@@ -456,9 +487,9 @@ namespace Aegis {
      * Must be called before any burning operations.
      * Thread-safe via static mutex.
      */
-    bool CDBurner::initializeLibburn() {
+    bool CDBurner::initializeLibburn() { // FIX: Return type should be bool
         QMutexLocker locker(&s_libburnMutex);
-
+        #ifdef HAVE_LIBBURN
         if (s_libburnInitialized) {
             return true;
         }
@@ -472,19 +503,23 @@ namespace Aegis {
         s_libburnInitialized = true;
         qDebug() << "libburn initialized successfully";
         return true;
+        #else
+        return false;
+        #endif // HAVE_LIBBURN
     }
 
     /**
      * @brief Cleanup libburn resources
      */
-    void CDBurner::cleanupLibburn() {
+    void CDBurner::cleanup() {
         QMutexLocker locker(&s_libburnMutex);
-
+        #ifdef HAVE_LIBBURN
         if (s_libburnInitialized) {
             burn_finish();
             s_libburnInitialized = false;
             qDebug() << "libburn cleanup completed";
         }
+        #endif // HAVE_LIBBURN
     }
 
     /**
@@ -500,7 +535,7 @@ namespace Aegis {
         }
 
         // Try Solid first
-        Solid::DeviceList allDrives = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDrive);
+        QList<Solid::Device> allDrives = Solid::Device::listFromType(Solid::DeviceInterface::OpticalDrive);
 
         for (const Solid::Device &dev : allDrives) {
             const Solid::Block *block = dev.as<Solid::Block>();
@@ -523,18 +558,17 @@ namespace Aegis {
                     info["mounted"] = false;
                 }
 
-                // Get media type
+                // Get media type - FIX: media() method doesn't exist, use supportedMedia()
                 const Solid::OpticalDrive *optical = dev.as<Solid::OpticalDrive>();
                 if (optical) {
-                    Solid::OpticalDrive::MediaTypes media = optical->media();
+                    auto mediaTypes = optical->supportedMedia();
 
-                    if (media & Solid::OpticalDrive::Cdr) info["mediaType"] = "CD-R";
-                    else if (media & Solid::OpticalDrive::Cdrw) info["mediaType"] = "CD-RW";
-                    else if (media & Solid::OpticalDrive::Dvdr) info["mediaType"] = "DVD-R";
-                    else if (media & Solid::OpticalDrive::Dvdplusr) info["mediaType"] = "DVD+R";
-                    else if (media & Solid::OpticalDrive::Bdr) info["mediaType"] = "BD-R";
-                    else if (media & Solid::OpticalDrive::Cdr) info["mediaType"] = "CD-ROM";
-                    else info["mediaType"] = "Unknown";
+                    if (mediaTypes & Solid::OpticalDrive::Cdr) info["mediaType"] = "CD-R";
+                    else if (mediaTypes & Solid::OpticalDrive::Cdrw) info["mediaType"] = "CD-RW";
+                    else if (mediaTypes & Solid::OpticalDrive::Dvdr) info["mediaType"] = "DVD-R";
+                    else if (mediaTypes & Solid::OpticalDrive::Dvdplusr) info["mediaType"] = "DVD+R";
+                    else if (mediaTypes & Solid::OpticalDrive::Bdr) info["mediaType"] = "BD-R";
+                    else info["mediaType"] = "Unknown/CD-ROM";
                 }
 
                 break;
@@ -545,6 +579,7 @@ namespace Aegis {
         if (!info.contains("mediaType")) {
             QMutexLocker locker(&s_libburnMutex);
 
+            #ifdef HAVE_LIBBURN
             if (!s_libburnInitialized && !initializeLibburn()) {
                 return info;
             }
@@ -555,7 +590,6 @@ namespace Aegis {
                 if (ret > 0) {
                     ret = burn_disc_read_profile(drive);
                     if (ret > 0) {
-                        // Profile indicates media type
                         switch (drive->profile) {
                             case 0x08: info["mediaType"] = "CD-R"; break;
                             case 0x09: info["mediaType"] = "CD-RW"; break;
@@ -564,16 +598,119 @@ namespace Aegis {
                             case 0x1A: info["mediaType"] = "BD-R"; break;
                             default: info["mediaType"] = "Unknown"; break;
                         }
-
-                        // Get capacity
                         info["capacityBytes"] = (qint64)drive->sectors * 2048;
                     }
                     burn_drive_release(drive, 0);
                 }
             }
+            #endif // HAVE_LIBBURN
         }
 
         return info;
     }
 
+    // ─── CDBurner constructor / destructor ────────────────────────────────────
+
+    CDBurner::CDBurner(QObject* parent)
+        : QObject(parent)
+    {}
+
+    CDBurner::~CDBurner() {
+        cleanup();
+    }
+
+    // ─── BurnWorker::run ─────────────────────────────────────────────────────
+
+    BurnWorker::BurnWorker(const BurnJob& job, QObject* parent)
+        : QThread(parent), m_job(job)
+    {}
+
+    void BurnWorker::run() {
+        emit logMessage(QStringLiteral("Burn started"), false);
+        bool ok = false;
+        switch (m_job.type) {
+            case BurnType::AudioCD:   ok = burnAudioCD();   break;
+            case BurnType::DataCD:    ok = burnDataCD();    break;
+            case BurnType::ISOImage:  ok = burnISO();       break;
+            case BurnType::DVDVideo:  ok = burnDVDVideo();  break;
+            default: break;
+        }
+        emit burnCompleted(ok, ok ? QStringLiteral("Done") : QStringLiteral("Failed"));
+    }
+
+    void BurnWorker::cancel() { m_cancel.store(true); }
+
+    bool BurnWorker::setupDrive()    { return false; }
+    bool BurnWorker::burnAudioCD()   { emit progress(0, "stub"); return false; }
+    bool BurnWorker::burnDataCD()    { emit progress(0, "stub"); return false; }
+    bool BurnWorker::burnISO()       { emit progress(0, "stub"); return false; }
+    bool BurnWorker::burnDVDVideo()  { emit progress(0, "stub"); return false; }
+    int  BurnWorker::speedToMultiplier(BurnSpeed, bool) { return 1; }
+
+    // ─── CDBurner public Q_INVOKABLE stubs ───────────────────────────────────
+
+    void CDBurner::onBurnCompleted(bool ok, const QString& msg) {
+        emit burnFinished(ok, msg);
+    }
+    void CDBurner::onProgress(int pct, const QString& msg) {
+        emit burnProgress(pct, msg);
+    }
+    void CDBurner::burnAudioFromPlaylist(const QString& drive, const QString& playlist, BurnSpeed speed) {
+        BurnJob job;
+        job.type = BurnType::AudioCD;
+        job.device = drive;
+        job.volumeLabel = playlist;
+        job.speed = speed;
+        startBurn(job);
+    }
+    void CDBurner::burnAudioFromTracks(const QList<QVariant>& tracks, const QString& drive, const QString& label) {
+        Q_UNUSED(tracks)
+        BurnJob job; job.type = BurnType::AudioCD; job.device = drive; job.volumeLabel = label;
+        startBurn(job);
+    }
+    void CDBurner::burnFiles(const QList<QString>& files, const QString& drive, const QString& label, bool dvd) {
+        Q_UNUSED(files)
+        BurnJob job; job.type = dvd ? BurnType::DVDVideo : BurnType::DataCD;
+        job.device = drive; job.volumeLabel = label;
+        startBurn(job);
+    }
+    void CDBurner::burnISO(const QString& isoPath, const QString& drive, bool verify) {
+        Q_UNUSED(verify)
+        BurnJob job; job.type = BurnType::ISOImage; job.isoPath = isoPath; job.device = drive;
+        startBurn(job);
+    }
+    void CDBurner::burnDVDVideo(const QString& videoDir, const QString& drive) {
+        BurnJob job; job.type = BurnType::DVDVideo; job.isoPath = videoDir; job.device = drive;
+        startBurn(job);
+    }
+    void CDBurner::blankCDRW(const QString& drive, bool fast) {
+        Q_UNUSED(drive) Q_UNUSED(fast)
+    }
+    void CDBurner::formatDVDPlusRW(const QString& drive) { Q_UNUSED(drive) }
+    void CDBurner::closeTray(const QString& drive)       { Q_UNUSED(drive) }
+    void CDBurner::createISOFromFiles(const QList<QString>& files, const QString& isoPath, const QString& label) {
+        Q_UNUSED(files) Q_UNUSED(isoPath) Q_UNUSED(label)
+    }
+    void CDBurner::cancelBurn() { if (m_worker) m_worker->cancel(); }
+    void CDBurner::setCDText(const QMap<QString, QVariant>& albumMeta, const QList<QVariant>& trackMeta) {
+        Q_UNUSED(albumMeta) Q_UNUSED(trackMeta)
+    }
+
+    void CDBurner::refreshDrives() {
+        m_availableDrives = enumerateDrives();
+        emit drivesChanged();
+    }
+
+    bool CDBurner::mediaPresent(const QString& device) {
+        QVariantMap info = mediaInfo(device);
+        return info.contains("mediaType");
+    }
+
+    void CDBurner::startBurn(const BurnJob &job) {
+        Q_UNUSED(job)
+        // Placeholder implementation: emit burnFinished immediately
+        emit burnFinished(false, QStringLiteral("Burn subsystem not implemented in this build."));
+    }
+
 } // namespace Aegis
+

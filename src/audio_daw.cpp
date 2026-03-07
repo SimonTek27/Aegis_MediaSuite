@@ -557,6 +557,15 @@ namespace Aegis {
         return tick / 480.0 * (60.0 / tempoAt(tick));
     }
 
+    void Measure::addTimeSignature(const TimeSignature& ts) {
+        d->timeSigs.append(ts);
+        emit modified();
+    }
+
+    const QVector<TimeSignature>& Measure::timeSignatures() const {
+        return d->timeSigs;
+    }
+
     // =============================================================================
     // Staff Private Implementation
     // =============================================================================
@@ -660,6 +669,9 @@ namespace Aegis {
         return static_cast<double>(d->lines) * 10.0;
     }
 
+    const std::vector<std::unique_ptr<Measure>>& Staff::measures() const { return d->measures; }
+    std::vector<std::unique_ptr<Measure>>& Staff::measures() { return d->measures; }
+
     // =============================================================================
     // Score Private Implementation
     // =============================================================================
@@ -701,6 +713,9 @@ namespace Aegis {
     void Score::setComposer(const QString& comp) { d->composer = comp; emit metadataChanged(); }
     void Score::setLyricist(const QString& lyr) { d->lyricist = lyr; emit metadataChanged(); }
     void Score::setCopyright(const QString& copy) { d->copyright = copy; emit metadataChanged(); }
+
+    const std::vector<std::unique_ptr<Staff>>& Score::staves() const { return d->staves; }
+    std::vector<std::unique_ptr<Staff>>& Score::staves() { return d->staves; }
 
     Staff* Score::addStaff(const QString& name) {
         auto staff = std::make_unique<Staff>(name, this);
@@ -1727,5 +1742,17 @@ namespace Aegis {
                                                                                                                           Q_UNUSED(path)
                                                                                                                           return false;
                                                                                                                       }
+
+    bool Score::loadMusicXML(const QString& path) {
+        Q_UNUSED(path)
+        // TODO: implement MusicXML import
+        return false;
+    }
+
+    bool Score::saveMusicXML(const QString& path) const {
+        Q_UNUSED(path)
+        // TODO: implement MusicXML export
+        return false;
+    }
 
 } // namespace Aegis

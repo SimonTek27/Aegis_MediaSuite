@@ -3,7 +3,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import Qt.labs.settings
+import QtCore
 import Qt.labs.platform as Platform
 import QtQuick.Window
 
@@ -19,6 +19,10 @@ ApplicationWindow {
     flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint |
     Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint |
     Qt.WindowCloseButtonHint
+
+    // Signal emitted when the user selects an app to launch.
+    // Connect this in main.qml or from C++ to switch modes.
+    signal appLaunchRequested(string mode)
 
     // Theme
     property var theme: {
@@ -330,7 +334,7 @@ ApplicationWindow {
 
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: notificationPanel.open()
+                            onClicked: showNotification("🔔", "Notifications")
                         }
                     }
 
@@ -993,7 +997,7 @@ ApplicationWindow {
                         ColumnLayout {
                             width: parent.width
                             spacing: 15
-                            padding: 15
+                            anchors.margins: 15
 
                             // Usage Statistics
                             GroupBox {
@@ -1365,18 +1369,18 @@ ApplicationWindow {
             // Category tag
             Rectangle {
                 Layout.alignment: Qt.AlignHCenter
-                width: Math.min(implicitWidth, parent.width)
+                width: categoryLabel.implicitWidth + 12
                 height: 20
                 radius: 4
                 color: getCategoryColor(appData.category)
 
                 Text {
+                    id: categoryLabel
                     anchors.centerIn: parent
                     text: appData.category
                     color: "white"
                     font.pixelSize: 9
                     font.bold: true
-                    padding: 4
                 }
             }
         }
@@ -1522,7 +1526,7 @@ ApplicationWindow {
             spacing: 12
 
             Text {
-                text: action.icon || "⚡"
+                text: action ? (action.icon || "⚡") : "⚡"
                 font.pixelSize: 16
             }
 
@@ -1531,14 +1535,14 @@ ApplicationWindow {
                 Layout.fillWidth: true
 
                 Text {
-                    text: action.title
+                    text: action ? action.title : ""
                     color: theme.textPrimary
                     font.bold: true
                     font.pixelSize: 12
                 }
 
                 Text {
-                    text: action.description
+                    text: action ? action.description : ""
                     color: theme.textSecondary
                     font.pixelSize: 10
                     elide: Text.ElideRight
@@ -2012,7 +2016,7 @@ ApplicationWindow {
                 icon: "🔄",
                 description: "Convert file format",
                 action: function() {
-                    rootWindow.showConverter()
+                    launcherWindow.appLaunchRequested("converter")
                     // Would open converter with file dialog
                 }
             },
@@ -2090,9 +2094,23 @@ ApplicationWindow {
     }
 
     function sortApps(criteria) {
+        // Snapshot items as plain JS objects BEFORE clearing the model.
+        // appModel.get(i) returns a live QObject-backed ref that becomes invalid
+        // the moment appModel.clear() is called — appending dead refs produces
+        // "undefined member" warnings and empty roles.
         var apps = []
         for (var i = 0; i < appModel.count; i++) {
-            apps.push(appModel.get(i))
+            var src = appModel.get(i)
+            apps.push({
+                id:          src.id,
+                name:        src.name,
+                icon:        src.icon,
+                description: src.description,
+                category:    src.category,
+                color:       src.color,
+                usageCount:  src.usageCount,
+                keywords:    src.keywords
+            })
         }
 
         apps.sort(function(a, b) {
@@ -2102,7 +2120,6 @@ ApplicationWindow {
                 case "usage":
                     return (b.usageCount || 0) - (a.usageCount || 0)
                 case "recent":
-                    // This would use last used timestamp
                     return 0
                 case "category":
                     return a.category.localeCompare(b.category)
@@ -2129,22 +2146,25 @@ ApplicationWindow {
         // Update recent apps
         addToRecentApps(appId)
 
-        // Launch app via main window
-        switch(appId) {
-            case "player": rootWindow.showPlayer(); break
-            case "converter": rootWindow.showConverter(); break
-            case "middleware": rootWindow.showMiddleware(); break
-            case "audioeditor": rootWindow.showAudioEditor(); break
-            case "videoeditor": rootWindow.showVideoEditor(); break
-            case "burner": rootWindow.showBurner(); break
-            case "labelmaker": rootWindow.showLabelMaker(); break
-            case "karaoke": rootWindow.showKaraoke(); break
-            case "djmixer": rootWindow.showDJMix(); break
-            case "modtracker": rootWindow.showModTracker(); break
-            default:
-                console.warn("Unknown app:", appId)
-                return
+        // Launch app — emit signal so C++ / main.qml can handle the transition
+        var modeMap = {
+            "player":      "player",
+            "converter":   "converter",
+            "middleware":  "middleware",
+            "audioeditor": "audioeditor",
+            "videoeditor": "videoeditor",
+            "burner":      "discburner",
+            "labelmaker":  "disc_labelmaker",
+            "karaoke":     "karaoke",
+            "djmixer":     "djmix",
+            "modtracker":  "modtracker"
         }
+        var mode = modeMap[appId]
+        if (!mode) {
+            console.warn("Unknown app:", appId)
+            return
+        }
+        launcherWindow.appLaunchRequested(mode)
 
         // Minimize launcher or keep it running
         launcherWindow.visibility = Window.Minimized
@@ -2265,21 +2285,18 @@ ApplicationWindow {
         switch(type) {
             case "audio":
             case "video":
-                rootWindow.showPlayer()
-                if (rootWindow.coreRef) {
-                    rootWindow.coreRef.loadFile(filePath)
-                }
+                launcherWindow.appLaunchRequested("mediaplayer")
                 break
             case "project":
                 // Open in appropriate editor
                 if (filePath.endsWith(".aegisedit")) {
-                    rootWindow.showAudioEditor()
+                    launcherWindow.appLaunchRequested("audioeditor")
                 } else if (filePath.endsWith(".aegisburn")) {
-                    rootWindow.showBurner()
+                    launcherWindow.appLaunchRequested("disctools")
                 } else if (filePath.endsWith(".aegisconv")) {
-                    rootWindow.showConverter()
+                    launcherWindow.appLaunchRequested("converter")
                 } else if (filePath.endsWith(".aegismiddleware")) {
-                    rootWindow.showMiddleware()
+                    launcherWindow.appLaunchRequested("middleware")
                 }
                 break
             default:
@@ -2290,26 +2307,30 @@ ApplicationWindow {
     }
 
     function openProject(projectPath) {
-        // Load project and open appropriate editor
-        var project = rootWindow.loadProject(projectPath)
-        if (project) {
-            showNotification("📁", "Opening project: " + project.name)
+        showNotification("📁", "Opening project: " + projectPath)
+        launcherWindow.appLaunchRequested("mediaplayer")
+    }
+
+    // One-shot timer used by refreshAllData() — replaces setTimeout which
+    // does not exist in QML JS.
+    Timer {
+        id: refreshAllTimer
+        interval: 500
+        repeat: false
+        onTriggered: {
+            loadRecentData()
+            loadApps()
+            calculateStats()
+            launcherWindow.isLoading = false
+            statusText.text = "Ready"
+            showNotification("🔄", "Data refreshed successfully")
         }
     }
 
     function refreshAllData() {
         isLoading = true
         statusText.text = "Refreshing data..."
-
-        setTimeout(function() {
-            loadRecentData()
-            loadApps()
-            calculateStats()
-            isLoading = false
-            statusText.text = "Ready"
-
-            showNotification("🔄", "Data refreshed successfully")
-        }, 500)
+        refreshAllTimer.restart()
     }
 
     function refreshData() {
@@ -2338,15 +2359,15 @@ ApplicationWindow {
     }
 
     function startRecording() {
-        rootWindow.startRecording()
+        launcherWindow.appLaunchRequested("capture")
     }
 
     function takeScreenshot() {
-        rootWindow.takeScreenshot()
+        launcherWindow.appLaunchRequested("capture")
     }
 
     function openAudioSettings() {
-        rootWindow.showAudioSettings()
+        launcherWindow.appLaunchRequested("audioeditor")
     }
 
     function executeAction(action) {
@@ -2525,7 +2546,7 @@ ApplicationWindow {
     }
 
     // System properties from main window
-    property real memoryUsage: rootWindow.memoryUsage || 0
-    property real batteryLevel: rootWindow.batteryLevel || 100
+    property real memoryUsage: 0
+    property real batteryLevel: 100
     property bool hasNotifications: false
 }

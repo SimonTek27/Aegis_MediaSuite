@@ -12,11 +12,15 @@
 #include "audio_output.h"  // NEW: Audio output abstraction
 
 // Forward declarations
-class Library;
-class Playlist;
-class Settings;
+namespace Aegis {
+    class Library;
+    class Playlist;
+    class Settings;
+}
 
 namespace Aegis {
+
+    class MpvBackend;  // forward declaration
 
     enum class PlaybackState {
         Stopped,
@@ -71,12 +75,6 @@ namespace Aegis {
         Q_PROPERTY(QString audioBackendName READ audioBackendName NOTIFY audioBackendChanged)
 
     public:
-        /**
-         * @brief Construct with explicit audio output dependency
-         * @param output AudioOutput for playback (PipeWire/Qt) - can be null to auto-create
-         * @param library Media library for metadata
-         * @param parent QObject parent
-         */
         explicit MediaPlayer(std::unique_ptr<AudioOutput> output = nullptr,
                              std::shared_ptr<Library> library = nullptr,
                              QObject *parent = nullptr);
@@ -102,29 +100,26 @@ namespace Aegis {
         double volume() const;
         void setMuted(bool muted);
         bool muted() const;
+        bool isMuted() const;
 
-        // DSP/Audio engine access
-        AudioEngine* audioEngine() { return m_audioEngine.get(); }
+        // DSP/Audio engine access (defined in .cpp via pimpl)
+        AudioEngine* audioEngine();
+        AudioOutput* audioOutput();
+        QString audioBackendName() const;
 
-        // Audio output access
-        AudioOutput* audioOutput() { return m_output.get(); }
-        QString audioBackendName() const {
-            return m_output ? AudioOutputFactory::backendName(m_output->backendType()) : "None";
-        }
-
-        // State getters
-        PlaybackState state() const { return m_state; }
-        QUrl source() const { return m_source; }
+        // State getters (all defined in .cpp via pimpl)
+        PlaybackState state() const;
+        QUrl source() const;
         qint64 position() const;
         qint64 duration() const;
-        TrackMetadata metadata() const { return m_metadata; }
-        bool seekable() const { return m_seekable; }
-        BackendType activeBackend() const { return m_activeBackend; }
-        bool isTrackerMode() const { return m_activeBackend == BackendType::Tracker; }
+        TrackMetadata metadata() const;
+        bool seekable() const;
+        BackendType activeBackend() const;
+        bool isTrackerMode() const;
 
         // Tracker-specific
-        int trackerChannels() const { return m_metadata.channels; }
-        int trackerPatterns() const { return m_metadata.patterns; }
+        int trackerChannels() const;
+        int trackerPatterns() const;
         int currentTrackerPattern() const;
         int currentTrackerRow() const;
 
@@ -136,7 +131,23 @@ namespace Aegis {
         Q_INVOKABLE bool switchAudioBackend(OutputBackend backend);
         Q_INVOKABLE OutputBackend currentAudioBackend() const;
 
+        // Playlist compat
+        Q_INVOKABLE void enqueue(const QUrl& url);
+        Q_INVOKABLE void setCurrentIndex(int index) { playAt(index); }
+        int currentIndex() const;
+        TrackMetadata currentMetadata() const;
+
+        // Repeat / Shuffle
+        enum class RepeatMode { None, Track, All };
+        Q_ENUM(RepeatMode)
+        void setRepeatMode(RepeatMode mode);
+        RepeatMode repeatMode() const;
+        void setShuffle(bool enabled);
+        bool shuffle() const;
+
     signals:
+        void currentTrackChanged();
+        void playbackFinished();
         void stateChanged(PlaybackState state);
         void sourceChanged(const QUrl &source);
         void positionChanged(qint64 position);
@@ -151,7 +162,6 @@ namespace Aegis {
         void audioBackendChanged();
 
     private slots:
-        // MPV backend handlers
         void onMpvPositionChanged(double position);
         void onMpvDurationChanged(double duration);
         void onMpvStateChanged(int state);
@@ -160,16 +170,13 @@ namespace Aegis {
         void onMpvError(const QString &message);
         void onMpvAudioData(const QByteArray &data, int sampleRate);
 
-        // Tracker handlers
         void onTrackerPositionChanged();
         void onTrackerFinished();
         void onTrackerError(const QString &message);
 
-        // Audio output handlers
         void onAudioOutputStateChanged(bool playing);
         void onAudioOutputUnderrun();
 
-        // Internal
         void updatePosition();
         void loadNextPlaylistItem();
         void processAudioOutput(float* buffer, int frames);
@@ -183,33 +190,11 @@ namespace Aegis {
         void resetMetadata();
         void cleanupCurrentPlayback();
         void initializeAudioOutput();
+        void loadTracker(const QString &path);
+        void loadMpv(const QUrl &url);
 
-        // Dependencies
-        std::shared_ptr<Library> m_library;
-        std::shared_ptr<Playlist> m_playlist;
-        std::unique_ptr<AudioEngine> m_audioEngine;      // Pillar 1
-        std::unique_ptr<MpvBackend> m_mpvBackend;        // Pillar 3
-        std::unique_ptr<AudioOutput> m_output;           // Audio output abstraction
-
-        // State
-        PlaybackState m_state = PlaybackState::Stopped;
-        BackendType m_activeBackend = BackendType::None;
-        QUrl m_source;
-        TrackMetadata m_metadata;
-        bool m_seekable = true;
-        double m_volume = 1.0;
-        bool m_muted = false;
-        bool m_playlistMode = false;
-        int m_currentPlaylistIndex = -1;
-
-        // Position tracking
-        QTimer m_positionTimer;
-        std::chrono::steady_clock::time_point m_lastPositionUpdate;
-        qint64 m_trackedPosition = 0;
-
-        // Audio processing buffer (intermediate between MPV and AudioOutput)
-        std::vector<float> m_audioBuffer;
-        int m_audioSampleRate = 48000;
+        class Private;
+        std::unique_ptr<Private> d;
     };
 
 } // namespace Aegis

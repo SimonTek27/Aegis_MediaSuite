@@ -241,7 +241,7 @@ namespace Aegis {
 
         // Calculate available lines
         int maxLines = static_cast<int>(targetRect.height() / lineHeight);
-        int linesToDraw = std::min(tracks.size(), maxLines);
+        int linesToDraw = std::min(static_cast<int>(tracks.size()), maxLines);
 
         for (int i = 0; i < linesToDraw; ++i) {
             QString line = formatString;
@@ -268,11 +268,11 @@ namespace Aegis {
         }
     }
 
-    void TrackListElement::setFromLibraryQuery(const QVector<Track>& libraryTracks) {
+    void TrackListElement::setFromLibraryQuery(const QVector<LibraryTrack>& libraryTracks) {
         tracks.clear();
         durations.clear();
         for (const auto& t : libraryTracks) {
-            tracks.append(QString::fromStdString(t.title));
+            tracks.append(t.title);
             durations.append(t.duration);
         }
     }
@@ -281,14 +281,14 @@ namespace Aegis {
 
     DiscLabelMaker::DiscLabelMaker(QObject* parent)
     : QObject(parent)
-    , m_libraryWatcher(std::make_unique<QFutureWatcher<QVector<Track>>>())
+    , m_libraryWatcher(std::make_unique<QFutureWatcher<std::vector<LibraryTrack>>>())
     , m_printer(std::make_unique<QPrinter>(QPrinter::HighResolution))
     {
         m_printer->setPageSize(QPageSize::A4);
         m_printer->setPageOrientation(QPageLayout::Portrait);
         m_printer->setFullPage(true);
 
-        connect(m_libraryWatcher.get(), &QFutureWatcher<QVector<Track>>::finished,
+        connect(m_libraryWatcher.get(), &QFutureWatcher<std::vector<LibraryTrack>>::finished,
                 this, &DiscLabelMaker::onLibraryQueryFinished);
     }
 
@@ -375,12 +375,13 @@ namespace Aegis {
         if (!library) return;
 
         m_pendingLibrary = library;
-        auto future = library->searchAlbumTracks(album);  // Assumes Library has this method
+        auto future = library->search(QString("album:%1").arg(album), 100);
         m_libraryWatcher->setFuture(future);
     }
 
     void DiscLabelMaker::onLibraryQueryFinished() {
-        auto tracks = m_libraryWatcher->result();
+        auto trackVec = m_libraryWatcher->result();
+        QList<LibraryTrack> tracks(trackVec.begin(), trackVec.end());
 
         if (tracks.isEmpty()) {
             emit libraryQueryFinished(false);
@@ -391,13 +392,13 @@ namespace Aegis {
         auto geom = geometry();
 
         if (!tracks.isEmpty()) {
-            const Track& first = tracks[0];
+            const LibraryTrack& first = tracks.first();
 
             // Title at top (centered for discs, top for cases)
             if (m_template == TemplateType::Disc120mm || m_template == TemplateType::Disc80mm) {
                 // Circular text around top
                 auto titleElem = std::make_unique<TextElement>();
-                titleElem->text = QString::fromStdString(first.title);
+                titleElem->text = first.title;
                 titleElem->rect = QRectF(10, 10, geom.size.width() - 20, 30);
                 titleElem->circularText = true;
                 titleElem->circleRadius = geom.outerDiameter / 2.0 - 10;
@@ -407,7 +408,7 @@ namespace Aegis {
 
                 // Artist at bottom (inverted curve)
                 auto artistElem = std::make_unique<TextElement>();
-                artistElem->text = QString::fromStdString(first.artist);
+                artistElem->text = first.artist;
                 artistElem->rect = QRectF(10, geom.size.height() - 40, geom.size.width() - 20, 30);
                 artistElem->circularText = true;
                 artistElem->circleRadius = geom.outerDiameter / 2.0 - 10;
@@ -417,27 +418,27 @@ namespace Aegis {
             } else if (m_template == TemplateType::JewelCaseFront) {
                 // Standard jewel case layout
                 auto titleElem = std::make_unique<TextElement>();
-                titleElem->text = QString::fromStdString(first.album);
+                titleElem->text = first.album;
                 titleElem->rect = QRectF(5, 90, 110, 20);
                 titleElem->font.setPointSize(12);
                 titleElem->font.setBold(true);
                 addElement(std::move(titleElem));
 
                 auto artistElem = std::make_unique<TextElement>();
-                artistElem->text = QString::fromStdString(first.artist);
+                artistElem->text = first.artist;
                 artistElem->rect = QRectF(5, 105, 110, 12);
                 addElement(std::move(artistElem));
 
             } else if (m_template == TemplateType::JewelCaseBack) {
                 // Album info on left, track list on right
                 auto titleElem = std::make_unique<TextElement>();
-                titleElem->text = QString::fromStdString(first.album);
+                titleElem->text = first.album;
                 titleElem->rect = QRectF(5, 5, 60, 15);
                 addElement(std::move(titleElem));
 
                 // Track list on back panel (right side)
                 auto trackElem = std::make_unique<TrackListElement>();
-                trackElem->setFromLibraryQuery(tracks);
+                trackElem->setFromLibraryQuery(QVector<LibraryTrack>(tracks.begin(), tracks.end()));
                 trackElem->rect = QRectF(80, 10, 65, 100);  // Right panel
                 addElement(std::move(trackElem));
             }
@@ -476,7 +477,7 @@ namespace Aegis {
         });
 
         // Trigger scan if needed
-        if (disc->discInfo().discId.isEmpty()) {
+        if (!disc->discPresent()) {
             disc->scanDisc();
         } else {
             onDiscScanned();
@@ -488,13 +489,14 @@ namespace Aegis {
         auto* disc = qobject_cast<Disc*>(sender());
         if (!disc) return;
 
-        auto info = disc->discInfo();
         clearElements();
         auto geom = geometry();
 
-        // Fill with CD-TEXT or MusicBrainz data
-        QString title = info.title.isEmpty() ? "Unknown Album" : info.title;
-        QString artist = info.artist.isEmpty() ? "Unknown Artist" : info.artist;
+        // Fill with CD-TEXT or MusicBrainz data using public Disc API
+        QString title = disc->discLabel().isEmpty() ? "Unknown Album" : disc->discLabel();
+        QString artist = "Unknown Artist";  // Not exposed publicly; filled by MusicBrainz later
+        QVariantList discTracks = disc->tracks();
+        bool hasTrackData = !discTracks.isEmpty();
 
         if (m_template == TemplateType::Disc120mm) {
             auto t = std::make_unique<TextElement>();
@@ -505,11 +507,12 @@ namespace Aegis {
         }
 
         // Track listing from disc info
-        if (m_template == TemplateType::JewelCaseBack && !info.tracks.isEmpty()) {
+        if (m_template == TemplateType::JewelCaseBack && hasTrackData) {
             auto te = std::make_unique<TrackListElement>();
-            for (const auto& trk : info.tracks) {
-                te->tracks.append(trk.title);
-                te->durations.append(trk.duration);
+            for (const auto& trk : discTracks) {
+                QVariantMap m = trk.toMap();
+                te->tracks.append(m.value("title").toString());
+                te->durations.append(m.value("duration", 0).toInt());
             }
             te->rect = QRectF(80, 10, 65, 100);
             addElement(std::move(te));
@@ -532,12 +535,12 @@ namespace Aegis {
                                      this, &DiscLabelMaker::onBurnFinished);
     }
 
-    void DiscLabelMaker::onBurnFinished(bool success, const BurnJob& job) {
+    void DiscLabelMaker::onBurnFinished(bool success, const QString& /*message*/) {
         if (!success) return;
 
-        // Prepare label for the disc that was just burned
-        prepareForBurnJob(job);
-        emit labelPreparedForBurn(job);
+        // Prepare label using the burn job stored before burning started
+        prepareForBurnJob(m_pendingBurnJob);
+        emit labelPreparedForBurn(m_pendingBurnJob);
     }
 
     void DiscLabelMaker::prepareForBurnJob(const BurnJob& job) {
@@ -552,10 +555,9 @@ namespace Aegis {
                 setCurrentTemplate(TemplateType::DVDCaseCover);
                 break;
             case BurnType::BluRayData:
-            case BurnType::BluRayVideo:
                 setCurrentTemplate(TemplateType::BluRayCaseCover);
                 break;
-            case BurnType::ISO:
+            case BurnType::ISOImage:
                 // Keep current or default to CD
                 if (m_template == TemplateType::CustomSize)
                     setCurrentTemplate(TemplateType::Disc120mm);
@@ -592,11 +594,12 @@ namespace Aegis {
         }
 
         // Fill track list if burning audio
-        if (job.type == BurnType::AudioCD && !job.tracks.isEmpty()) {
+        if (job.type == BurnType::AudioCD && !job.trackIds.isEmpty()) {
             auto tl = std::make_unique<TrackListElement>();
-            for (const auto& t : job.tracks) {
-                tl->tracks.append(t.title);
-                tl->durations.append(t.duration);
+            for (const auto& trackId : job.trackIds) {
+                // trackIds are library track IDs (int) — display as "Track N"
+                tl->tracks.append(QString("Track %1").arg(trackId));
+                tl->durations.append(0);  // Duration not available at this stage
             }
 
             if (geom.isDisc()) {
@@ -782,7 +785,7 @@ namespace Aegis {
 
             // Apply rotation around center
             QPointF center = elemRect.center();
-            painter.translate(center);
+            painter->translate(center);
             painter->rotate(elem->rotation);
             painter->translate(-center);
 
@@ -1012,6 +1015,131 @@ namespace Aegis {
             m_modified = true;
             emit modifiedChanged();
         }
+    }
+
+    // ─── Subclass serialize / deserialize ─────────────────────────────────────
+
+    QVariantMap TextElement::serialize() const {
+        QVariantMap m = LabelElement::serialize();
+        m[QStringLiteral("text")]      = text;
+        m[QStringLiteral("font")]      = font.toString();
+        m[QStringLiteral("color")]     = color.name();
+        m[QStringLiteral("alignment")] = static_cast<int>(alignment);
+        m[QStringLiteral("autoFit")]   = autoFit;
+        return m;
+    }
+
+    void TextElement::deserialize(const QVariantMap& map) {
+        LabelElement::deserialize(map);
+        text      = map.value(QStringLiteral("text")).toString();
+        font.fromString(map.value(QStringLiteral("font")).toString());
+        color     = QColor(map.value(QStringLiteral("color")).toString());
+        alignment = static_cast<Qt::Alignment>(map.value(QStringLiteral("alignment")).toInt());
+        autoFit   = map.value(QStringLiteral("autoFit"), true).toBool();
+    }
+
+    QVariantMap ImageElement::serialize() const {
+        QVariantMap m = LabelElement::serialize();
+        m[QStringLiteral("source")]        = source.toString();
+        m[QStringLiteral("maintainAspect")]= maintainAspect;
+        m[QStringLiteral("blurRadius")]    = blurRadius;
+        return m;
+    }
+
+    void ImageElement::deserialize(const QVariantMap& map) {
+        LabelElement::deserialize(map);
+        source         = QUrl(map.value(QStringLiteral("source")).toString());
+        maintainAspect = map.value(QStringLiteral("maintainAspect"), true).toBool();
+        blurRadius     = map.value(QStringLiteral("blurRadius"), 0).toInt();
+    }
+
+    QVariantMap ShapeElement::serialize() const {
+        QVariantMap m = LabelElement::serialize();
+        m[QStringLiteral("shapeType")]   = static_cast<int>(shapeType);
+        m[QStringLiteral("fillColor")]   = fillColor.name();
+        m[QStringLiteral("strokeColor")] = strokeColor.name();
+        m[QStringLiteral("strokeWidth")] = strokeWidth;
+        return m;
+    }
+
+    void ShapeElement::deserialize(const QVariantMap& map) {
+        LabelElement::deserialize(map);
+        shapeType   = static_cast<ShapeType>(map.value(QStringLiteral("shapeType")).toInt());
+        fillColor   = QColor(map.value(QStringLiteral("fillColor")).toString());
+        strokeColor = QColor(map.value(QStringLiteral("strokeColor")).toString());
+        strokeWidth = map.value(QStringLiteral("strokeWidth"), 0.5).toDouble();
+    }
+
+    QVariantMap TrackListElement::serialize() const {
+        QVariantMap m = LabelElement::serialize();
+        m[QStringLiteral("showNumbers")] = showTrackNumbers;
+        m[QStringLiteral("showTimes")]   = showDurations;
+        m[QStringLiteral("font")]        = font.toString();
+        m[QStringLiteral("color")]       = color.name();
+        return m;
+    }
+
+    void TrackListElement::deserialize(const QVariantMap& map) {
+        LabelElement::deserialize(map);
+        showTrackNumbers = map.value(QStringLiteral("showNumbers"), true).toBool();
+        showDurations    = map.value(QStringLiteral("showTimes"),   true).toBool();
+        font.fromString(map.value(QStringLiteral("font")).toString());
+        color = QColor(map.value(QStringLiteral("color")).toString());
+    }
+
+    // ─── DiscLabelMaker missing stubs ────────────────────────────────────────
+
+    QVariantList DiscLabelMaker::availablePaperTypes() const {
+        return { QVariant::fromValue(LabelSheetType::A4),
+                 QVariant::fromValue(LabelSheetType::Letter),
+                 QVariant::fromValue(LabelSheetType::Avery8692) };
+    }
+
+    void DiscLabelMaker::resizeElement(const QString& id, const QSizeF& sz) {
+        if (auto* e = findElement(id)) {
+            e->rect.setSize(sz); emit elementsChanged();
+        }
+    }
+    void DiscLabelMaker::rotateElement(const QString& id, double deg) {
+        if (auto* e = findElement(id)) { e->rotation = deg; emit elementsChanged(); }
+    }
+    void DiscLabelMaker::bringToFront(const QString& id) {
+        Q_UNUSED(id) emit elementsChanged();
+    }
+    void DiscLabelMaker::sendToBack(const QString& id) {
+        Q_UNUSED(id) emit elementsChanged();
+    }
+    void DiscLabelMaker::autoFillFromLibraryPlaylist(const QString&, Library*) {}
+
+    void DiscLabelMaker::setBackgroundColor(const QColor& color) {
+        m_bgColor = color; emit projectChanged();
+    }
+    void DiscLabelMaker::setBackgroundImage(const QUrl& source) {
+        m_bgImage = source; emit projectChanged();
+    }
+    void DiscLabelMaker::centerElement(const QString& id, bool h, bool v) {
+        if (auto* e = findElement(id)) {
+            const double discMm = 120.0;
+            if (h) e->rect.moveLeft((discMm - e->rect.width()) / 2.0);
+            if (v) e->rect.moveTop((discMm - e->rect.height()) / 2.0);
+            emit elementsChanged();
+        }
+    }
+    void DiscLabelMaker::alignToGrid(const QString& id, double gridSizeMm) {
+        if (auto* e = findElement(id)) {
+            e->rect.moveLeft(std::round(e->rect.x() / gridSizeMm) * gridSizeMm);
+            e->rect.moveTop(std::round(e->rect.y() / gridSizeMm) * gridSizeMm);
+            emit elementsChanged();
+        }
+    }
+    void DiscLabelMaker::snapToGuides(const QString&) { emit elementsChanged(); }
+
+    void DiscLabelMaker::printPreview() {}
+    void DiscLabelMaker::setPrintOffsetMm(const QPointF& offset) {
+        m_printOffset = offset; emit paperChanged();
+    }
+    void DiscLabelMaker::setPaperType(LabelSheetType type) {
+        m_paper = type; emit paperChanged();
     }
 
 } // namespace Aegis

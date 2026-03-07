@@ -1,6 +1,4 @@
 // Aegis Audio Editor - UI Definition
-// This file defines the main application window with Aegis Audio Editor-style interface
-// Note: This is a recreation of Aegis Audio Editor's UI design, not an official product
 
 import QtQuick
 import QtQuick.Controls
@@ -17,928 +15,1260 @@ ApplicationWindow {
     id: mainWindow
     visible: true
 
-    // Aegis Audio Editor typically uses fixed size with resizable window
+    // Modern floating window with custom frame
+    flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
     width: 1600
     height: 1000
-    minimumWidth: 800
-    minimumHeight: 600
+    minimumWidth: 1000
+    minimumHeight: 700
 
-    // Window title with modified indicator and filename
+    // Modern title with dynamic content
     title: {
-        var baseTitle = "Aegis Audio Editor"
-        if (AudioEditor.modified) {
-            baseTitle += " *"  // Asterisk indicates unsaved changes
-        }
-        if (AudioEditor.currentFile) {
-            var fileName = AudioEditor.currentFile.split('/').pop()
-            baseTitle += " - " + fileName
-        }
-        return baseTitle
+        var base = "🎵 GoldWave Studio Professional"
+        if (AudioEngine.modified) base += " • Modified"
+            if (AudioEngine.currentFile) {
+                var name = AudioEngine.currentFile.split('/').pop()
+                base += ` — ${name}`
+            }
+            return base
     }
 
     // ============================================
-    // MENU BAR - Aegis Audio Editor Style Layout
+    // CUSTOM TITLE BAR - Modern macOS/Windows 11 Style
     // ============================================
 
-    menuBar: MenuBar {
-        id: mainMenuBar
+    Rectangle {
+        id: titleBar
+        height: 48
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        color: currentTheme === "modernDark" ? "#202020" : "#f0f0f0"
+        z: 999
 
-        // FILE MENU - Aegis Audio Editor
-        Menu {
-            title: qsTr("&File")
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            spacing: 8
 
-            MenuItem {
-                text: qsTr("&New...")
-                shortcut: "Ctrl+N"
-                onTriggered: AudioEditor.newFile()
-            }
+            // App Icon and Title
+            RowLayout {
+                spacing: 12
 
-            MenuItem {
-                text: qsTr("&Open...")
-                shortcut: "Ctrl+O"
-                onTriggered: fileDialog.open()
-            }
+                Rectangle {
+                    width: 32
+                    height: 32
+                    radius: 8
+                    color: accentColor
+                    Text {
+                        anchors.center: parent
+                        text: "GW"
+                        font.bold: true
+                        font.pixelSize: 16
+                        color: "white"
+                    }
+                }
 
-            MenuSeparator {}
-
-            Menu {
-                title: qsTr("&Open Special")  // Aegis Audio Editor's wording
-                MenuItem { text: qsTr("&Append...") }
-                MenuItem { text: qsTr("&Paste New...") }
-                MenuItem { text: qsTr("&Record New...") }
-            }
-
-            MenuItem {
-                text: qsTr("&Close")
-                shortcut: "Ctrl+W"
-                onTriggered: AudioEditor.closeFile()
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Save")
-                shortcut: "Ctrl+S"
-                enabled: AudioEditor.modified
-                onTriggered: AudioEditor.save()
-            }
-
-            MenuItem {
-                text: qsTr("Save &As...")
-                shortcut: "Ctrl+Shift+S"
-                onTriggered: saveDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("Save &Selection As...")  // Aegis Audio Editor's wording
-                onTriggered: saveSelectionDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("Save &Copy As...")  // Aegis Audio Editor's wording
-            }
-
-            MenuSeparator {}
-
-            Menu {
-                title: qsTr("&File Information")  // Aegis Audio Editor's wording
-                MenuItem { text: qsTr("&Summary Information...") }
-                MenuItem { text: qsTr("C&D Information...") }
-                MenuItem { text: qsTr("Edit Cue &Points...") }
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Revert to Saved")
-                enabled: AudioEditor.modified
-                onTriggered: AudioEditor.revert()
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Exit")
-                shortcut: "Alt+F4"
-                onTriggered: Qt.quit()
-            }
-
-            MenuItem {
-                text: qsTr("E&xit and Return to [Application]")  // Aegis Audio Editor's exact wording
-                visible: false  // Only shown when called from another app
-            }
-        }
-
-        // EDIT MENU - Aegis Audio Editor's exact order
-        Menu {
-            title: qsTr("&Edit")
-
-            MenuItem {
-                text: qsTr("&Undo")
-                shortcut: "Ctrl+Z"
-                enabled: AudioEditor.canUndo
-                onTriggered: AudioEditor.undo()
-            }
-
-            MenuItem {
-                text: qsTr("&Redo")
-                shortcut: "Ctrl+Y"
-                enabled: AudioEditor.canRedo
-                onTriggered: AudioEditor.redo()
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("Cu&t")
-                shortcut: "Ctrl+X"
-                enabled: AudioEditor.hasSelection
-                onTriggered: AudioEditor.cut()
-            }
-
-            MenuItem {
-                text: qsTr("&Copy")
-                shortcut: "Ctrl+C"
-                enabled: AudioEditor.hasSelection
-                onTriggered: AudioEditor.copy()
-            }
-
-            MenuItem {
-                text: qsTr("&Paste")
-                shortcut: "Ctrl+V"
-                enabled: AudioEditor.canPaste
-                onTriggered: AudioEditor.paste()
-            }
-
-            MenuItem {
-                text: qsTr("Paste &New")  // Aegis Audio Editor's exact wording
-                shortcut: "Ctrl+Shift+V"
-                enabled: AudioEditor.canPaste
-                onTriggered: AudioEditor.pasteNew()
-            }
-
-            MenuItem {
-                text: qsTr("Paste &at Cursor")  // Aegis Audio Editor's exact wording
-                shortcut: "Ctrl+B"
-                enabled: AudioEditor.canPaste
-                onTriggered: AudioEditor.pasteAtCursor()
-            }
-
-            MenuItem {
-                text: qsTr("&Mix...")
-                shortcut: "Ctrl+M"
-                enabled: AudioEditor.canPaste
-                onTriggered: AudioEditor.mix()
-            }
-
-            MenuItem {
-                text: qsTr("&Replace")
-                shortcut: "Ctrl+R"
-                enabled: AudioEditor.canPaste && AudioEditor.hasSelection
-                onTriggered: AudioEditor.replace()
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Delete")
-                shortcut: "Del"
-                enabled: AudioEditor.hasSelection
-                onTriggered: AudioEditor.deleteSelection()
-            }
-
-            MenuItem {
-                text: qsTr("De&lete Silence...")  // Aegis Audio Editor's exact wording
-                onTriggered: AudioEditor.deleteSilence()
-            }
-
-            MenuItem {
-                text: qsTr("Tri&m")  // Aegis Audio Editor's exact wording
-                shortcut: "Ctrl+T"
-                enabled: AudioEditor.hasSelection
-                onTriggered: AudioEditor.trim()
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Select All")
-                shortcut: "Ctrl+A"
-                onTriggered: AudioEditor.selectAll()
-            }
-
-            MenuItem {
-                text: qsTr("Select &None")  // Aegis Audio Editor's exact wording
-                shortcut: "Ctrl+Shift+A"
-                onTriggered: AudioEditor.selectNone()
-            }
-
-            MenuSeparator {}
-
-            Menu {
-                title: qsTr("&Insert")  // Aegis Audio Editor's exact wording
-                MenuItem { text: qsTr("&Silence...") }
-                MenuItem { text: qsTr("&Noise...") }
-                MenuItem { text: qsTr("&Tone...") }
-                MenuItem { text: qsTr("&File...") }
-            }
-
-            Menu {
-                title: qsTr("&Overwrite")  // Aegis Audio Editor's exact wording
-                MenuItem { text: qsTr("&Silence...") }
-                MenuItem { text: qsTr("&Noise...") }
-                MenuItem { text: qsTr("&Tone...") }
-                MenuItem { text: qsTr("&File...") }
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("Chan&nel")  // Aegis Audio Editor's exact wording
-                Menu {
-                    MenuItem { text: qsTr("&Left") }
-                    MenuItem { text: qsTr("&Right") }
-                    MenuItem { text: qsTr("&Both") }
-                    MenuSeparator {}
-                    MenuItem { text: qsTr("&Swap") }
-                    MenuItem { text: qsTr("M&aximize") }
+                Text {
+                    text: mainWindow.title
+                    font.pixelSize: 14
+                    font.weight: Font.Medium
+                    color: currentTheme === "modernDark" ? "#ffffff" : "#000000"
+                    opacity: 0.9
                 }
             }
 
-            MenuItem {
-                text: qsTr("Co&nvert")  // Aegis Audio Editor's exact wording
-                Menu {
-                    MenuItem { text: qsTr("T&o Mono...") }
-                    MenuItem { text: qsTr("To S&tereo...") }
-                    MenuSeparator {}
-                    MenuItem { text: qsTr("&Sample Rate...") }
-                    MenuItem { text: qsTr("&Format...") }
+            Item { Layout.fillWidth: true }
+
+            // Window Controls
+            RowLayout {
+                spacing: 8
+
+                // Theme Toggle
+                RoundButton {
+                    implicitWidth: 36
+                    implicitHeight: 36
+                    icon.source: currentTheme === "modernDark" ? "qrc:/icons/light-mode.svg" : "qrc:/icons/dark-mode.svg"
+                    icon.width: 20
+                    icon.height: 20
+                    flat: true
+                    onClicked: toggleTheme()
                 }
-            }
 
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("Find &Clip...")  // Aegis Audio Editor's exact wording
-                shortcut: "Ctrl+F"
-                onTriggered: AudioEditor.findClip()
-            }
-
-            MenuItem {
-                text: qsTr("Find &Next Clip")  // Aegis Audio Editor's exact wording
-                shortcut: "F3"
-                onTriggered: AudioEditor.findNextClip()
-            }
-        }
-
-        // EFFECT MENU - Aegis Audio Editor's exact order
-        Menu {
-            title: qsTr("&Effect")
-
-            MenuItem {
-                text: qsTr("&Doppler...")
-                onTriggered: effectDialog.showEffect("doppler")
-            }
-
-            MenuItem {
-                text: qsTr("&Dynamics...")
-                onTriggered: effectDialog.showEffect("dynamics")
-            }
-
-            MenuItem {
-                text: qsTr("&Echo...")
-                onTriggered: effectDialog.showEffect("echo")
-            }
-
-            MenuItem {
-                text: qsTr("E&qualizer...")
-                onTriggered: effectDialog.showEffect("equalizer")
-            }
-
-            MenuItem {
-                text: qsTr("&Filter...")
-                onTriggered: effectDialog.showEffect("filter")
-            }
-
-            MenuItem {
-                text: qsTr("F&lange...")
-                onTriggered: effectDialog.showEffect("flange")
-            }
-
-            MenuItem {
-                text: qsTr("In&terpolate...")
-                onTriggered: effectDialog.showEffect("interpolate")
-            }
-
-            MenuItem {
-                text: qsTr("Me&chanize...")
-                onTriggered: effectDialog.showEffect("mechanize")
-            }
-
-            MenuItem {
-                text: qsTr("&Noise Reduction...")
-                onTriggered: effectDialog.showEffect("noiseReduction")
-            }
-
-            MenuItem {
-                text: qsTr("&Pan...")
-                onTriggered: effectDialog.showEffect("pan")
-            }
-
-            MenuItem {
-                text: qsTr("&Parametric Equalizer...")
-                onTriggered: effectDialog.showEffect("parametricEq")
-            }
-
-            MenuItem {
-                text: qsTr("Pitch...")  // No ampersand in Aegis Audio Editor
-                onTriggered: effectDialog.showEffect("pitch")
-            }
-
-            MenuItem {
-                text: qsTr("&Reverse")
-                onTriggered: AudioEditor.reverse()
-            }
-
-            MenuItem {
-                text: qsTr("S&ilence")
-                onTriggered: AudioEditor.silence()
-            }
-
-            MenuItem {
-                text: qsTr("&Time Warp...")
-                onTriggered: effectDialog.showEffect("timeWarp")
-            }
-
-            MenuItem {
-                text: qsTr("&Volume...")
-                onTriggered: effectDialog.showEffect("volume")
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Combine...")
-                onTriggered: effectDialog.showEffect("combine")
-            }
-
-            MenuItem {
-                text: qsTr("&Shape...")
-                onTriggered: effectDialog.showEffect("shape")
-            }
-
-            MenuItem {
-                text: qsTr("S&urround...")
-                onTriggered: effectDialog.showEffect("surround")
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Expression Evaluator...")
-                onTriggered: effectDialog.showEffect("expression")
-            }
-
-            MenuItem {
-                text: qsTr("&Convolution...")
-                onTriggered: effectDialog.showEffect("convolution")
-            }
-
-            MenuItem {
-                text: qsTr("&VST Plugin...")
-                onTriggered: vstDialog.open()
-            }
-        }
-
-        // TOOLS MENU - Aegis Audio Editor's exact order
-        Menu {
-            title: qsTr("&Tools")
-
-            MenuItem {
-                text: qsTr("&CD Reader...")
-                onTriggered: cdReaderDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("C&DX...")  // Aegis Audio Editor's exact wording
-                onTriggered: cddxDlg.open()
-            }
-
-            MenuItem {
-                text: qsTr("&Expression Evaluator...")
-                onTriggered: expressionDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("&File Merger...")
-                onTriggered: fileMergerDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("&Batch Processing...")
-                onTriggered: batchProcessingDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("&Control Properties...")
-                onTriggered: controlPropertiesDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("Play&back Rate...")
-                onTriggered: playbackRateDialog.open()
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Macro...")
-                onTriggered: macroDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("Quick &Macro")  // Aegis Audio Editor's exact wording
-                Menu {
-                    MenuItem { text: qsTr("&Record Quick Macro...") }
-                    MenuItem { text: qsTr("Play &Quick Macro...") }
-                    MenuItem { text: qsTr("Edit Quick &Macros...") }
+                // Minimize
+                RoundButton {
+                    implicitWidth: 36
+                    implicitHeight: 36
+                    icon.source: "qrc:/icons/minimize.svg"
+                    flat: true
+                    onClicked: mainWindow.showMinimized()
                 }
-            }
 
-            MenuSeparator {}
+                // Maximize/Restore
+                RoundButton {
+                    implicitWidth: 36
+                    implicitHeight: 36
+                    icon.source: mainWindow.visibility === Window.Maximized ?
+                    "qrc:/icons/restore.svg" : "qrc:/icons/maximize.svg"
+                    flat: true
+                    onClicked: mainWindow.visibility === Window.Maximized ?
+                    mainWindow.showNormal() : mainWindow.showMaximized()
+                }
 
-            MenuItem {
-                text: qsTr("&Marker")
-                Menu {
-                    MenuItem { text: qsTr("&Set Start Marker") }
-                    MenuItem { text: qsTr("Set &End Marker") }
-                    MenuItem { text: qsTr("&Go to Start Marker") }
-                    MenuItem { text: qsTr("Go to &End Marker") }
-                    MenuSeparator {}
-                    MenuItem { text: qsTr("&Clear Markers") }
-                    MenuItem { text: qsTr("Auto &Markers...") }
+                // Close
+                RoundButton {
+                    implicitWidth: 36
+                    implicitHeight: 36
+                    icon.source: "qrc:/icons/close.svg"
+                    flat: true
+                    icon.color: "#ff4444"
+                    onClicked: mainWindow.close()
                 }
             }
         }
 
-        // OPTIONS MENU - Aegis Audio Editor's exact order
-        Menu {
-            title: qsTr("&Options")
+        // Bottom separator
+        Rectangle {
+            height: 1
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            color: currentTheme === "modernDark" ? "#404040" : "#e0e0e0"
+        }
+    }
 
-            MenuItem {
-                text: qsTr("&Toolbar...")
-                onTriggered: toolbarDialog.open()
-            }
+    // ============================================
+    // MODERN COLOR SYSTEM
+    // ============================================
 
-            MenuItem {
-                text: qsTr("&Colors...")
-                onTriggered: colorsDialog.open()
-            }
+    property string currentTheme: "modernDark"
+    property color accentColor: "#00C8B4"  // Modern teal accent
+    property color accentHover: "#00E6D0"
+    property color accentPressed: "#00A090"
 
-            MenuItem {
-                text: qsTr("&Font...")
-                onTriggered: fontDialog.open()
-            }
+    property var themes: {
+        "modernDark": {
+            background: "#1a1e24",
+            surface: "#252b33",
+            surface2: "#2f3640",
+            surface3: "#3a424d",
+            text: "#ffffff",
+            textSecondary: "#a0a8b5",
+            border: "#404854",
+            success: "#00C8B4",
+            warning: "#FFB74D",
+            error: "#FF5252",
+            info: "#64B5F6"
+        },
+        "modernLight": {
+            background: "#f8f9fa",
+            surface: "#ffffff",
+            surface2: "#f1f3f5",
+            surface3: "#e9ecef",
+            text: "#212529",
+            textSecondary: "#6c757d",
+            border: "#dee2e6",
+            success: "#00C8B4",
+            warning: "#FFB74D",
+            error: "#FF5252",
+            info: "#64B5F6"
+        }
+    }
 
-            MenuItem {
-                text: qsTr("&Keyboard...")
-                onTriggered: keyboardDialog.open()
-            }
+    // ============================================
+    // MODERN TOOLBAR - Ribbon Style
+    // ============================================
 
-            MenuSeparator {}
+    Rectangle {
+        id: ribbonToolbar
+        anchors.top: titleBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: 120
+        color: themes[currentTheme].surface
+        z: 998
 
-            MenuItem {
-                text: qsTr("&Playback Options...")
-                onTriggered: playbackOptionsDialog.open()
-            }
+        // Bottom shadow
+        Rectangle {
+            height: 1
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            color: themes[currentTheme].border
+        }
 
-            MenuItem {
-                text: qsTr("&Recording Options...")
-                onTriggered: recordingOptionsDialog.open()
-            }
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: 8
+            spacing: 16
 
-            MenuItem {
-                text: qsTr("&Status Bar")
-                checkable: true
-                checked: statusBarVisible
-                onTriggered: statusBarVisible = checked
-            }
+            // File Operations Group
+            ToolGroup {
+                title: "File"
+                Layout.preferredWidth: 280
 
-            MenuSeparator {}
+                RowLayout {
+                    spacing: 4
 
-            MenuItem {
-                text: qsTr("&Always on Top")
-                checkable: true
-                checked: mainWindow.flags & Qt.WindowStaysOnTopHint
-                onTriggered: {
-                    if (checked) {
-                        mainWindow.flags |= Qt.WindowStaysOnTopHint
-                    } else {
-                        mainWindow.flags &= ~Qt.WindowStaysOnTopHint
+                    ToolButtonEx {
+                        text: "New"
+                        iconSource: "qrc:/icons/new.svg"
+                        shortcut: "Ctrl+N"
+                        onClicked: AudioEngine.newFile()
+                    }
+                    ToolButtonEx {
+                        text: "Open"
+                        iconSource: "qrc:/icons/open.svg"
+                        shortcut: "Ctrl+O"
+                        onClicked: fileDialog.open()
+                    }
+                    ToolButtonEx {
+                        text: "Save"
+                        iconSource: "qrc:/icons/save.svg"
+                        shortcut: "Ctrl+S"
+                        enabled: AudioEngine.modified
+                        onClicked: AudioEngine.save()
+                    }
+                    ToolButtonEx {
+                        text: "Save As"
+                        iconSource: "qrc:/icons/save-as.svg"
+                        shortcut: "Ctrl+Shift+S"
+                        onClicked: saveDialog.open()
                     }
                 }
             }
 
-            MenuItem {
-                text: qsTr("&Minimize to Tray")
-                checkable: true
-                checked: false
-                onTriggered: AudioEditor.minimizeToTray = checked
-            }
+            // Edit Operations Group
+            ToolGroup {
+                title: "Edit"
+                Layout.preferredWidth: 280
 
-            MenuSeparator {}
+                RowLayout {
+                    spacing: 4
 
-            MenuItem {
-                text: qsTr("&File Associations...")
-                onTriggered: fileAssociationsDialog.open()
-            }
-        }
-
-        // WINDOW MENU - Aegis Audio Editor's exact order
-        Menu {
-            title: qsTr("&Window")
-
-            MenuItem {
-                text: qsTr("&Cascade")
-                onTriggered: windowManager.cascade()
-            }
-
-            MenuItem {
-                text: qsTr("&Tile Horizontally")
-                onTriggered: windowManager.tileHorizontally()
-            }
-
-            MenuItem {
-                text: qsTr("Tile &Vertically")
-                onTriggered: windowManager.tileVertically()
-            }
-
-            MenuItem {
-                text: qsTr("&Arrange Icons")
-                onTriggered: windowManager.arrangeIcons()
-            }
-
-            MenuSeparator {}
-
-            Repeater {
-                model: windowManager.windowList
-                MenuItem {
-                    text: modelData.title
-                    checkable: true
-                    checked: modelData.active
-                    onTriggered: windowManager.activateWindow(modelData.id)
+                    ToolButtonEx {
+                        text: "Undo"
+                        iconSource: "qrc:/icons/undo.svg"
+                        shortcut: "Ctrl+Z"
+                        enabled: AudioEngine.canUndo
+                        onClicked: AudioEngine.undo()
+                    }
+                    ToolButtonEx {
+                        text: "Redo"
+                        iconSource: "qrc:/icons/redo.svg"
+                        shortcut: "Ctrl+Y"
+                        enabled: AudioEngine.canRedo
+                        onClicked: AudioEngine.redo()
+                    }
+                    ToolButtonEx {
+                        text: "Cut"
+                        iconSource: "qrc:/icons/cut.svg"
+                        shortcut: "Ctrl+X"
+                        enabled: AudioEngine.hasSelection
+                        onClicked: AudioEngine.cut()
+                    }
+                    ToolButtonEx {
+                        text: "Copy"
+                        iconSource: "qrc:/icons/copy.svg"
+                        shortcut: "Ctrl+C"
+                        enabled: AudioEngine.hasSelection
+                        onClicked: AudioEngine.copy()
+                    }
+                    ToolButtonEx {
+                        text: "Paste"
+                        iconSource: "qrc:/icons/paste.svg"
+                        shortcut: "Ctrl+V"
+                        enabled: AudioEngine.canPaste
+                        onClicked: AudioEngine.paste()
+                    }
                 }
             }
 
-            MenuSeparator {}
+            // Transport Controls Group
+            ToolGroup {
+                title: "Transport"
+                Layout.preferredWidth: 300
 
-            MenuItem {
-                text: qsTr("&Close All")
-                onTriggered: windowManager.closeAll()
+                RowLayout {
+                    spacing: 8
+
+                    // Play/Pause
+                    Rectangle {
+                        width: 48
+                        height: 48
+                        radius: 24
+                        color: AudioEngine.isPlaying ? themes[currentTheme].warning : accentColor
+                        Behavior on color { ColorAnimation { duration: 200 } }
+
+                        IconButton {
+                            anchors.centerIn: parent
+                            iconSource: AudioEngine.isPlaying ? "qrc:/icons/pause.svg" : "qrc:/icons/play.svg"
+                            iconColor: "white"
+                            iconSize: 24
+                            onClicked: AudioEngine.togglePlayback()
+                        }
+
+                        // Ripple effect on click
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: parent.clicked()
+                            onPressed: ripple.start()
+                        }
+                    }
+
+                    // Stop
+                    Rectangle {
+                        width: 40
+                        height: 40
+                        radius: 20
+                        color: themes[currentTheme].surface3
+
+                        IconButton {
+                            anchors.centerIn: parent
+                            iconSource: "qrc:/icons/stop.svg"
+                            iconSize: 20
+                            onClicked: AudioEngine.stop()
+                        }
+                    }
+
+                    // Record
+                    Rectangle {
+                        width: 40
+                        height: 40
+                        radius: 20
+                        color: AudioEngine.isRecording ? themes[currentTheme].error : themes[currentTheme].surface3
+
+                        IconButton {
+                            anchors.centerIn: parent
+                            iconSource: "qrc:/icons/record.svg"
+                            iconColor: AudioEngine.isRecording ? "white" : themes[currentTheme].text
+                            iconSize: 20
+                            onClicked: AudioEngine.toggleRecording()
+                        }
+                    }
+
+                    // Position indicator
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 40
+                        color: themes[currentTheme].surface2
+                        radius: 20
+                        padding: 8
+
+                        RowLayout {
+                            anchors.fill: parent
+                            spacing: 8
+
+                            Text {
+                                text: formatTime(AudioEngine.playbackPosition)
+                                color: themes[currentTheme].text
+                                font.family: "Monospace"
+                                font.bold: true
+                            }
+
+                            Text {
+                                text: "/"
+                                color: themes[currentTheme].textSecondary
+                            }
+
+                            Text {
+                                text: formatTime(AudioEngine.duration)
+                                color: themes[currentTheme].textSecondary
+                                font.family: "Monospace"
+                            }
+                        }
+                    }
+                }
             }
-        }
 
-        // HELP MENU - Aegis Audio Editor's exact order
-        Menu {
-            title: qsTr("&Help")
+            // Effects Group
+            ToolGroup {
+                title: "Effects"
+                Layout.preferredWidth: 200
 
-            MenuItem {
-                text: qsTr("&Contents")
-                shortcut: "F1"
-                onTriggered: helpSystem.showContents()
-            }
+                RowLayout {
+                    spacing: 4
 
-            MenuItem {
-                text: qsTr("&Index...")
-                onTriggered: helpSystem.showIndex()
-            }
-
-            MenuItem {
-                text: qsTr("&Search...")
-                onTriggered: helpSystem.showSearch()
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("&Tip of the Day...")
-                onTriggered: tipDialog.open()
-            }
-
-            MenuItem {
-                text: qsTr("&Register...")
-                onTriggered: registerDialog.open()
-            }
-
-            MenuSeparator {}
-
-            MenuItem {
-                text: qsTr("Check for &Updates...")
-                onTriggered: updateChecker.check()
-            }
-
-            MenuItem {
-                text: qsTr("&About Aegis Audio Editor...")
-                onTriggered: aboutDialog.open()
+                    ToolButtonEx {
+                        text: "EQ"
+                        iconSource: "qrc:/icons/equalizer.svg"
+                        onClicked: showEffectPanel("equalizer")
+                    }
+                    ToolButtonEx {
+                        text: "Comp"
+                        iconSource: "qrc:/icons/compressor.svg"
+                        onClicked: showEffectPanel("compressor")
+                    }
+                    ToolButtonEx {
+                        text: "Reverb"
+                        iconSource: "qrc:/icons/reverb.svg"
+                        onClicked: showEffectPanel("reverb")
+                    }
+                    ToolButtonEx {
+                        text: "VST"
+                        iconSource: "qrc:/icons/vst.svg"
+                        onClicked: vstManager.show()
+                    }
+                }
             }
         }
     }
 
     // ============================================
-    // COLOR THEME SYSTEM
+    // CUSTOM COMPONENTS
     // ============================================
 
-    // Classic Aegis Audio Editor color schemes - dark theme as default
-    property string currentTheme: "classicDark"
+    component ToolGroup: Rectangle {
+        property string title
 
-    // Theme definitions matching Aegis Audio Editor's visual style
-    property var themes: {
-        "classicDark": {
-            // Main background colors
-            window: "#1a1a1a",
-            windowText: "#e0e0e0",
-            base: "#2a2a2a",
-            alternateBase: "#252525",
-            text: "#d0d0d0",
+        color: "transparent"
+        height: 104
 
-            // Control colors
-            button: "#3a3a3a",
-            buttonText: "#ffffff",
-            highlight: "#0066cc",  // Classic blue highlight
-            highlightedText: "#ffffff",
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 4
 
-            // 3D effect colors
-            mid: "#404040",
-            midlight: "#505050",
-            shadow: "#1a1a1a",
+            Text {
+                text: parent.title
+                color: themes[currentTheme].textSecondary
+                font.pixelSize: 11
+                font.uppercase: true
+                letterSpacing: 1
+            }
 
-            // Special UI elements
-            toolbar: "#333333",
-            waveformBg: "#000000",
-            selection: "#3399ff",  // Light blue selection
-            cursor: "#ffff00",     // Yellow playback cursor
-            ruler: "#808080"
-        },
-        "classicLight": {
-            // Light theme similar to older Windows applications
-            window: "#f0f0f0",
-            windowText: "#000000",
-            base: "#ffffff",
-            alternateBase: "#f5f5f5",
-            text: "#000000",
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: themes[currentTheme].surface2
+                radius: 12
 
-            // Control colors
-            button: "#e0e0e0",
-            buttonText: "#000000",
-            highlight: "#0066cc",  // Consistent highlight color
-            highlightedText: "#ffffff",
-
-            // 3D effect colors
-            mid: "#c0c0c0",
-            midlight: "#d0d0d0",
-            shadow: "#a0a0a0",
-
-            // Special UI elements
-            toolbar: "#e8e8e8",
-            waveformBg: "#ffffff",
-            selection: "#3399ff",
-            cursor: "#ff0000",     // Red cursor for light theme
-            ruler: "#606060"
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 8
+                    children: parent.children
+                }
+            }
         }
     }
 
-    // Apply selected theme to window palette
-    palette: themes[currentTheme]
+    component ToolButtonEx: Button {
+        property string iconSource
+        property string iconColor: themes[currentTheme].text
+
+        implicitWidth: 48
+        implicitHeight: 48
+        flat: true
+
+        contentItem: ColumnLayout {
+            spacing: 4
+
+            Image {
+                source: parent.iconSource
+                sourceSize.width: 24
+                sourceSize.height: 24
+                Layout.alignment: Qt.AlignHCenter
+                visible: status === Image.Ready
+            }
+
+            Text {
+                text: parent.text
+                font.pixelSize: 10
+                color: themes[currentTheme].textSecondary
+                Layout.alignment: Qt.AlignHCenter
+                visible: parent.text.length > 0
+            }
+        }
+
+        background: Rectangle {
+            radius: 8
+            color: parent.hovered ? themes[currentTheme].surface3 : "transparent"
+            Behavior on color { ColorAnimation { duration: 150 } }
+        }
+    }
+
+    component IconButton: Item {
+        property string iconSource
+        property color iconColor: themes[currentTheme].text
+        property int iconSize: 16
+        signal clicked
+
+        width: 40
+        height: 40
+
+        Image {
+            anchors.centerIn: parent
+            source: parent.iconSource
+            sourceSize.width: parent.iconSize
+            sourceSize.height: parent.iconSize
+            visible: status === Image.Ready
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: parent.clicked()
+        }
+    }
 
     // ============================================
-    // AUDIO VISUALIZATION COLORS
+    // MAIN CONTENT AREA
     // ============================================
 
-    // Waveform and meter colors matching Aegis Audio Editor style
-    property color waveformColor: "#00cc00"        // Green waveforms
-    property color waveformCenterLine: "#808080"   // Gray center line
-    property color selectionColor: themes[currentTheme].selection
-    property color cursorColor: themes[currentTheme].cursor
+    Rectangle {
+        anchors.top: ribbonToolbar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: statusBar.top
+        color: themes[currentTheme].background
 
-    // Level meter colors (gradient from green to red)
-    property color meterLow: "#00ff00"      // Green
-    property color meterMid: "#ffff00"      // Yellow
-    property color meterHigh: "#ff0000"     // Red
-    property color meterClip: "#ff00ff"     // Magenta for clipping
+        RowLayout {
+            anchors.fill: parent
+            spacing: 1
 
-    // Spectrum analyzer colors (blue to red gradient)
-    property color spectrumStart: "#0000ff"  // Blue
-    property color spectrumMid: "#00ffff"    // Cyan
-    property color spectrumEnd: "#ff0000"    // Red
+            // Left Panel - Devices & Effects
+            Rectangle {
+                Layout.preferredWidth: 250
+                Layout.fillHeight: true
+                color: themes[currentTheme].surface
+                visible: devicesPanelVisible || effectsPanelVisible
 
-    // ============================================
-    // APPLICATION STATE PROPERTIES
-    // ============================================
+                StackLayout {
+                    anchors.fill: parent
+                    currentIndex: effectsPanelVisible ? 1 : 0
 
-    // Reference to AudioEditor C++ backend
-    property alias audioEditor: AudioEditor
+                    // Devices Panel
+                    DevicesPanel {
+                        visible: devicesPanelVisible
+                    }
 
-    // Audio playback/recording state
-    property bool isPlaying: AudioEditor.isPlaying
-    property bool isRecording: AudioEditor.isRecording
-    property bool isPaused: AudioEditor.isPaused
-    property double playbackPosition: AudioEditor.playbackPosition
-    property double selectionStart: AudioEditor.selectionStart
-    property double selectionEnd: AudioEditor.selectionEnd
+                    // Effects Panel
+                    EffectsPanel {
+                        visible: effectsPanelVisible
+                    }
+                }
+            }
 
-    // Audio file properties (linked to backend)
-    property double sampleRate: AudioEditor.sampleRate
-    property int channels: AudioEditor.channelCount
-    property int bitDepth: AudioEditor.bitDepth
-    property double duration: AudioEditor.duration
+            // Center - Waveform Display
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: themes[currentTheme].surface2
 
-    // View properties
-    property double zoomLevel: 1.0          // Zoom multiplier
-    property bool showSpectrum: true        // Spectrum analyzer visibility
-    property bool showWaveform: true        // Waveform visibility
-    property bool showControls: true        // Control panel visibility
+                WaveformDisplay {
+                    id: waveformDisplay
+                    anchors.fill: parent
+                    anchors.margins: 8
 
-    // ============================================
-    // EFFECTS AND PROCESSING
-    // ============================================
+                    audioEngine: AudioEngine
+                    zoomLevel: mainWindow.zoomLevel
+                    showSpectrum: mainWindow.showSpectrum
+                    showWaveform: mainWindow.showWaveform
+                    selectionColor: accentColor
+                    cursorColor: themes[currentTheme].warning
+                    gridColor: themes[currentTheme].border
+                }
+            }
 
-    // Effect presets storage
-    property var effectPresets: AudioEditor.effectPresets || []
+            // Right Panel - Analysis & Properties
+            Rectangle {
+                Layout.preferredWidth: 300
+                Layout.fillHeight: true
+                color: themes[currentTheme].surface
 
-    // VST plugin management
-    property var vstPlugins: []
-    property var activeVstChain: []
-    property bool vstLoaded: false
-    property bool vstScanning: false
-
-    // Batch processing
-    property bool batchMode: false
-    property var batchQueue: []
-    property int batchProgress: 0
-    property int batchTotal: 0
-
-    // ============================================
-    // HARDWARE AND DEVICES
-    // ============================================
-
-    // CD burning capabilities
-    property bool isBurning: CDBurner ? CDBurner.burning : false
-    property var availableDrives: []
-
-    // Audio device properties
-    property var audioDevices: AudioEditor.availableDevices || []
-    property string inputDevice: AudioEditor.inputDevice || ""
-    property string outputDevice: AudioEditor.outputDevice || ""
+                RightPanel {
+                    audioEngine: AudioEngine
+                }
+            }
+        }
+    }
 
     // ============================================
-    // UI STATE FLAGS
+    // MODERN STATUS BAR
     // ============================================
 
-    // Toolbar and panel visibility
-    property bool toolbarVisible: true
-    property bool statusBarVisible: true
-    property bool effectsPanelVisible: false
-    property bool devicesPanelVisible: false
+    Rectangle {
+        id: statusBar
+        height: 40
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        color: themes[currentTheme].surface
+        visible: statusBarVisible
 
-    // Visual feedback states
-    property bool showGrid: true
-    property bool showRuler: true
-    property bool showMarkers: true
+        // Top border
+        Rectangle {
+            height: 1
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            color: themes[currentTheme].border
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            spacing: 24
+
+            // Audio format info
+            RowLayout {
+                spacing: 16
+
+                StatusBadge {
+                    text: `${(AudioEngine.sampleRate / 1000).toFixed(1)} kHz`
+                    iconSource: "qrc:/icons/sample-rate.svg"
+                }
+
+                StatusBadge {
+                    text: `${AudioEngine.bitDepth}-bit`
+                    iconSource: "qrc:/icons/bit-depth.svg"
+                }
+
+                StatusBadge {
+                    text: AudioEngine.channelCount === 1 ? "Mono" : "Stereo"
+                    iconSource: AudioEngine.channelCount === 1 ? "qrc:/icons/mono.svg" : "qrc:/icons/stereo.svg"
+                }
+            }
+
+            Item { Layout.fillWidth: true }
+
+            // Processing indicators
+            RowLayout {
+                spacing: 16
+                visible: AudioEngine.isProcessing
+
+                BusyIndicator {
+                    running: true
+                    implicitWidth: 20
+                    implicitHeight: 20
+                }
+
+                Text {
+                    text: "Processing: " + AudioEngine.progress + "%"
+                    color: themes[currentTheme].textSecondary
+                }
+            }
+
+            // Selection info
+            Text {
+                text: {
+                    if (AudioEngine.hasSelection) {
+                        let start = formatTime(AudioEngine.selectionStart)
+                        let end = formatTime(AudioEngine.selectionEnd)
+                        let duration = formatTime(AudioEngine.selectionEnd - AudioEngine.selectionStart)
+                        return `Selected: ${start} - ${end} (${duration})`
+                    }
+                    return "No selection"
+                }
+                color: themes[currentTheme].textSecondary
+            }
+
+            // VST status
+            StatusBadge {
+                text: activeVstChain.length ? `${activeVstChain.length} VSTs` : "No VSTs"
+                iconSource: "qrc:/icons/vst.svg"
+                highlight: activeVstChain.length > 0
+            }
+        }
+    }
 
     // ============================================
-    // WINDOW SETTINGS
-    // ============================================
-
-    // Window state persistence
-    property var windowState: ({
-        x: 100,
-        y: 100,
-        width: 1600,
-        height: 1000,
-        maximized: false
-    })
-
-    // Recent files list (max 10 files)
-    property var recentFiles: AudioEditor.recentFiles || []
-
-    // User preferences
-    property bool autoSaveEnabled: false
-    property int autoSaveInterval: 300000  // 5 minutes in milliseconds
-    property bool showTooltips: true
-    property bool confirmDeletion: true
-
-    // ============================================
-    // FILE DIALOGS
+    // MODERN FILE DIALOGS
     // ============================================
 
     FileDialog {
         id: fileDialog
-        title: qsTr("Open Audio File")
+        title: "Open Audio File"
         fileMode: FileDialog.OpenFile
         nameFilters: [
-            qsTr("Audio Files (*.wav *.mp3 *.ogg *.flac *.aac *.m4a *.wma *.aiff *.au)"),
-            qsTr("Wave Files (*.wav)"),
-            qsTr("MP3 Files (*.mp3)"),
-            qsTr("All Files (*)")
+            "All Audio Files (*.wav *.mp3 *.flac *.aiff *.m4a *.ogg *.wma)",
+            "Wave Files (*.wav)",
+            "MP3 Files (*.mp3)",
+            "FLAC Files (*.flac)",
+            "AIFF Files (*.aiff)"
         ]
-        onAccepted: AudioEditor.openFile(fileDialog.selectedFile)
+        onAccepted: AudioEngine.openFile(fileDialog.file)
     }
 
     FileDialog {
         id: saveDialog
-        title: qsTr("Save Audio File")
+        title: "Save Audio File"
         fileMode: FileDialog.SaveFile
         nameFilters: [
-            qsTr("Wave Files (*.wav)"),
-            qsTr("MP3 Files (*.mp3)"),
-            qsTr("Ogg Vorbis Files (*.ogg)"),
-            qsTr("All Files (*)")
+            "Wave Files (*.wav)",
+            "MP3 Files (*.mp3)",
+            "FLAC Files (*.flac)",
+            "AIFF Files (*.aiff)"
         ]
-        onAccepted: AudioEditor.saveAs(saveDialog.selectedFile)
-    }
-
-    FileDialog {
-        id: saveSelectionDialog
-        title: qsTr("Save Selection As")
-        fileMode: FileDialog.SaveFile
-        nameFilters: fileDialog.nameFilters
-        onAccepted: AudioEditor.saveSelection(saveSelectionDialog.selectedFile)
+        onAccepted: AudioEngine.saveAs(saveDialog.file)
     }
 
     // ============================================
-    // SIGNAL CONNECTIONS
+    // MODERN SIDE PANELS
     // ============================================
 
-    Connections {
-        target: AudioEditor
+    component DevicesPanel: Rectangle {
+        color: "transparent"
 
-        function onPlaybackPositionChanged(position) {
-            playbackPosition = position;
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 16
+
+            Text {
+                text: "AUDIO DEVICES"
+                color: themes[currentTheme].textSecondary
+                font.pixelSize: 12
+                font.bold: true
+                letterSpacing: 1
+            }
+
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 8
+                model: AudioEngine.availableDevices
+
+                delegate: Rectangle {
+                    width: ListView.view.width
+                    height: 60
+                    color: themes[currentTheme].surface2
+                    radius: 8
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 4
+
+                        Text {
+                            text: modelData.name
+                            color: themes[currentTheme].text
+                            font.bold: true
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+
+                        Text {
+                            text: modelData.type + " • " + modelData.channels + " channels"
+                            color: themes[currentTheme].textSecondary
+                            font.pixelSize: 11
+                        }
+                    }
+
+                    // Active indicator
+                    Rectangle {
+                        width: 4
+                        height: parent.height
+                        radius: 2
+                        color: modelData.active ? accentColor : "transparent"
+                        anchors.left: parent.left
+                    }
+                }
+            }
+
+            Button {
+                text: "Configure Devices"
+                Layout.fillWidth: true
+                implicitHeight: 40
+                onClicked: deviceConfigDialog.open()
+            }
+        }
+    }
+
+    component EffectsPanel: Rectangle {
+        color: "transparent"
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 16
+
+            Text {
+                text: "EFFECTS CHAIN"
+                color: themes[currentTheme].textSecondary
+                font.pixelSize: 12
+                font.bold: true
+                letterSpacing: 1
+            }
+
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 8
+                model: activeVstChain
+
+                delegate: Rectangle {
+                    width: ListView.view.width
+                    height: 48
+                    color: themes[currentTheme].surface2
+                    radius: 8
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 8
+
+                        Rectangle {
+                            width: 4
+                            height: 24
+                            radius: 2
+                            color: modelData.active ? accentColor : themes[currentTheme].border
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Text {
+                                text: modelData.name
+                                color: themes[currentTheme].text
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            Text {
+                                text: modelData.vendor
+                                color: themes[currentTheme].textSecondary
+                                font.pixelSize: 10
+                            }
+                        }
+
+                        // Bypass toggle
+                        Switch {
+                            checked: !modelData.bypassed
+                            onToggled: modelData.bypassed = !checked
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                spacing: 8
+
+                Button {
+                    text: "Add VST"
+                    Layout.fillWidth: true
+                    implicitHeight: 40
+                    onClicked: vstManager.show()
+                }
+
+                Button {
+                    text: "Clear"
+                    Layout.fillWidth: true
+                    implicitHeight: 40
+                    onClicked: activeVstChain = []
+                }
+            }
+        }
+    }
+
+    component RightPanel: Rectangle {
+        property var audioEngine
+        color: "transparent"
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 20
+
+            // File properties
+            Text {
+                text: "PROPERTIES"
+                color: themes[currentTheme].textSecondary
+                font.pixelSize: 12
+                font.bold: true
+                letterSpacing: 1
+            }
+
+            GridLayout {
+                columns: 2
+                columnSpacing: 8
+                rowSpacing: 12
+                Layout.fillWidth: true
+
+                // Duration
+                Text { text: "Duration:"; color: themes[currentTheme].textSecondary }
+                Text {
+                    text: formatTime(audioEngine ? audioEngine.duration : 0)
+                    color: themes[currentTheme].text
+                    font.bold: true
+                }
+
+                // Sample Rate
+                Text { text: "Sample Rate:"; color: themes[currentTheme].textSecondary }
+                Text {
+                    text: audioEngine ? `${(audioEngine.sampleRate / 1000).toFixed(1)} kHz` : "—"
+                    color: themes[currentTheme].text
+                }
+
+                // Bit Depth
+                Text { text: "Bit Depth:"; color: themes[currentTheme].textSecondary }
+                Text {
+                    text: audioEngine ? `${audioEngine.bitDepth}-bit` : "—"
+                    color: themes[currentTheme].text
+                }
+
+                // Channels
+                Text { text: "Channels:"; color: themes[currentTheme].textSecondary }
+                Text {
+                    text: audioEngine ? (audioEngine.channelCount === 1 ? "Mono" : "Stereo") : "—"
+                    color: themes[currentTheme].text
+                }
+
+                // File Size
+                Text { text: "File Size:"; color: themes[currentTheme].textSecondary }
+                Text {
+                    text: audioEngine ? formatFileSize(audioEngine.fileSize) : "—"
+                    color: themes[currentTheme].text
+                }
+            }
+
+            // Level meters
+            Text {
+                text: "LEVEL METERS"
+                color: themes[currentTheme].textSecondary
+                font.pixelSize: 12
+                font.bold: true
+                letterSpacing: 1
+            }
+
+            Repeater {
+                model: audioEngine ? audioEngine.channelCount : 2
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    Text {
+                        text: "Channel " + (index + 1)
+                        color: themes[currentTheme].textSecondary
+                        font.pixelSize: 11
+                    }
+
+                    LevelMeter {
+                        Layout.fillWidth: true
+                        height: 24
+                        value: audioEngine ? audioEngine.level[index] : 0
+                        peak: audioEngine ? audioEngine.peak[index] : 0
+                        clip: audioEngine ? audioEngine.clip[index] : false
+                    }
+                }
+            }
+
+            // Spectrum analyzer preview
+            Text {
+                text: "SPECTRUM"
+                color: themes[currentTheme].textSecondary
+                font.pixelSize: 12
+                font.bold: true
+                letterSpacing: 1
+            }
+
+            SpectrumPreview {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 100
+                audioEngine: audioEngine
+            }
+
+            Item { Layout.fillHeight: true }
+        }
+    }
+
+    component LevelMeter: Rectangle {
+        property real value: 0
+        property real peak: 0
+        property bool clip: false
+
+        color: themes[currentTheme].surface3
+        radius: 4
+        clip: true
+
+        Rectangle {
+            width: parent.width * Math.min(parent.value, 1.0)
+            height: parent.height
+            radius: 4
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#00C8B4" }
+                GradientStop { position: 0.7; color: "#FFB74D" }
+                GradientStop { position: 1.0; color: "#FF5252" }
+            }
         }
 
-        function onSelectionChanged(start, end) {
-            selectionStart = start;
-            selectionEnd = end;
+        Rectangle {
+            width: 2
+            height: parent.height
+            x: parent.width * Math.min(parent.peak, 1.0) - 1
+            color: parent.clip ? "#FF5252" : "white"
+        }
+    }
+
+    component SpectrumPreview: Rectangle {
+        property var audioEngine
+        color: "transparent"
+
+        Canvas {
+            anchors.fill: parent
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+
+                if (!audioEngine || !audioEngine.spectrumData) return
+
+                    var data = audioEngine.spectrumData
+                    var barWidth = width / data.length
+
+                    ctx.fillStyle = accentColor
+                    for (var i = 0; i < data.length; i++) {
+                        var barHeight = data[i] * height
+                        ctx.fillRect(i * barWidth, height - barHeight, barWidth - 1, barHeight)
+                    }
+            }
         }
 
-        function onFileLoaded() {
-            sampleRate = AudioEditor.sampleRate;
-            channels = AudioEditor.channelCount;
-            bitDepth = AudioEditor.bitDepth;
-            duration = AudioEditor.duration;
+        Timer {
+            interval: 50
+            running: true
+            repeat: true
+            onTriggered: parent.requestPaint()
         }
+    }
 
-        function onModifiedChanged() {
-            mainWindow.title = mainWindow.title;
+    component StatusBadge: Rectangle {
+        property string text
+        property string iconSource
+        property bool highlight: false
+
+        color: "transparent"
+        height: 24
+        width: implicitWidth + 16
+
+        implicitWidth: row.implicitWidth + 16
+
+        RowLayout {
+            id: row
+            anchors.centerIn: parent
+            spacing: 4
+
+            Image {
+                source: parent.parent.iconSource
+                sourceSize.width: 16
+                sourceSize.height: 16
+                visible: status === Image.Ready
+            }
+
+            Text {
+                text: parent.parent.text
+                color: parent.parent.highlight ? accentColor : themes[currentTheme].textSecondary
+                font.pixelSize: 12
+            }
         }
     }
 
     // ============================================
-    // FUNCTIONS
+    // WAVEFORM DISPLAY
     // ============================================
+
+    component WaveformDisplay: Rectangle {
+        property var audioEngine
+        property double zoomLevel: 1.0
+        property bool showSpectrum: true
+        property bool showWaveform: true
+        property color selectionColor
+        property color cursorColor
+        property color gridColor
+
+        color: themes[currentTheme].background
+
+        // Grid overlay
+        Repeater {
+            model: 10
+            Rectangle {
+                x: index * (parent.width / 10)
+                width: 1
+                height: parent.height
+                color: parent.gridColor
+                opacity: 0.3
+            }
+        }
+
+        Repeater {
+            model: 8
+            Rectangle {
+                y: index * (parent.height / 8)
+                width: parent.width
+                height: 1
+                color: parent.gridColor
+                opacity: 0.3
+            }
+        }
+
+        // Selection overlay
+        Rectangle {
+            visible: audioEngine && audioEngine.hasSelection
+            x: (audioEngine.selectionStart / audioEngine.duration) * parent.width
+            width: ((audioEngine.selectionEnd - audioEngine.selectionStart) / audioEngine.duration) * parent.width
+            height: parent.height
+            color: parent.selectionColor
+            opacity: 0.2
+        }
+
+        // Cursor
+        Rectangle {
+            x: (audioEngine.playbackPosition / audioEngine.duration) * parent.width - width/2
+            y: 0
+            width: 2
+            height: parent.height
+            color: parent.cursorColor
+        }
+
+        // Waveform canvas
+        Canvas {
+            anchors.fill: parent
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+
+                if (!audioEngine || !audioEngine.waveformData) return
+
+                    var data = audioEngine.waveformData
+                    var midY = height / 2
+
+                    ctx.strokeStyle = "#00C8B4"
+                    ctx.lineWidth = 1
+                    ctx.beginPath()
+
+                    for (var i = 0; i < data.length; i++) {
+                        var x = (i / data.length) * width
+                        var y = midY + (data[i] * midY)
+
+                        if (i === 0) ctx.moveTo(x, y)
+                            else ctx.lineTo(x, y)
+                    }
+
+                    ctx.stroke()
+            }
+        }
+
+        Timer {
+            interval: 50
+            running: true
+            repeat: true
+            onTriggered: parent.requestPaint()
+        }
+    }
+
+    // ============================================
+    // UTILITY FUNCTIONS
+    // ============================================
+
+    function formatTime(seconds) {
+        if (!seconds || seconds < 0) return "00:00.000"
+            var mins = Math.floor(seconds / 60)
+            var secs = Math.floor(seconds % 60)
+            var ms = Math.floor((seconds % 1) * 1000)
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
+    }
+
+    function formatFileSize(bytes) {
+        if (!bytes) return "0 B"
+            var units = ["B", "KB", "MB", "GB"]
+            var i = 0
+            while (bytes >= 1024 && i < units.length - 1) {
+                bytes /= 1024
+                i++
+            }
+            return bytes.toFixed(1) + " " + units[i]
+    }
 
     function toggleTheme() {
-        if (currentTheme === "classicDark") {
-            currentTheme = "classicLight";
-        } else {
-            currentTheme = "classicDark";
-        }
-        palette = themes[currentTheme];
+        currentTheme = currentTheme === "modernDark" ? "modernLight" : "modernDark"
     }
 
-    function resetZoom() {
-        zoomLevel = 1.0;
+    function showEffectPanel(effect) {
+        effectsPanelVisible = true
+        devicesPanelVisible = false
+        // Load effect UI
     }
 
-    function fitToWindow() {
-        if (duration > 0) {
-            zoomLevel = mainWindow.width / (duration * 100);
-        }
-    }
+    // ============================================
+    // KEYBOARD SHORTCUTS
+    // ============================================
 
-    // Aegis Audio Editor-style keyboard shortcuts for common actions
     Shortcut {
         sequence: "Space"
-        onActivated: AudioEditor.togglePlayback()
+        onActivated: AudioEngine.togglePlayback()
     }
 
     Shortcut {
-        sequence: "Ctrl+Home"
-        onActivated: AudioEditor.goToStart()
-    }
-
-    Shortcut {
-        sequence: "Ctrl+End"
-        onActivated: AudioEditor.goToEnd()
+        sequence: "Ctrl+Space"
+        onActivated: AudioEngine.toggleRecording()
     }
 
     Shortcut {
         sequence: "Home"
-        onActivated: AudioEditor.goToSelectionStart()
+        onActivated: AudioEngine.goToStart()
     }
 
     Shortcut {
         sequence: "End"
-        onActivated: AudioEditor.goToSelectionEnd()
+        onActivated: AudioEngine.goToEnd()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+A"
+        onActivated: AudioEngine.selectAll()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Z"
+        onActivated: AudioEngine.undo()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Y"
+        onActivated: AudioEngine.redo()
+    }
+
+    Shortcut {
+        sequence: "Delete"
+        onActivated: AudioEngine.deleteSelection()
+    }
+
+    Shortcut {
+        sequence: "F5"
+        onActivated: AudioEngine.playSelection()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+F"
+        onActivated: showEffectPanel("equalizer")
+    }
+
+    // ============================================
+    // COMPONENT CONNECTIONS
+    // ============================================
+
+    Connections {
+        target: AudioEngine
+
+        function onFileLoaded() {
+            // Update UI when file loads
+            zoomLevel = 1.0
+        }
+
+        function onPlaybackStarted() {
+            // Update transport controls
+        }
+
+        function onPlaybackStopped() {
+            // Update transport controls
+        }
+
+        function onRecordingStarted() {
+            devicesPanelVisible = true
+        }
     }
 }

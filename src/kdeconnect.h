@@ -17,6 +17,7 @@ Q_DECLARE_METATYPE(KdeConnectDevice)
 
 class KDEConnect : public QObject {
     Q_OBJECT
+    
     Q_PROPERTY(bool available READ available NOTIFY availabilityChanged)
     Q_PROPERTY(QVariantList devices READ devices NOTIFY devicesChanged)
 
@@ -40,6 +41,8 @@ public slots:
     void refreshDevices();
 
 signals:
+    void deviceConnected(const QString& deviceId);
+    void deviceDisconnected(const QString& deviceId);
     void availabilityChanged();
     void devicesChanged();
     void fileReceived(const QString &path, const QString &fromDevice);

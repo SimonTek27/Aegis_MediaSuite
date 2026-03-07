@@ -661,6 +661,30 @@ namespace Aegis {
         return m_module->get_current_row();
     }
 
+    QStringList ModTrackerPlayback::supportedExtensions() const {
+        return {
+            QStringLiteral("mod"), QStringLiteral("xm"),  QStringLiteral("it"),
+            QStringLiteral("s3m"), QStringLiteral("mptm"), QStringLiteral("mo3"),
+            QStringLiteral("669"), QStringLiteral("mtm"),  QStringLiteral("umx"),
+            QStringLiteral("okt"), QStringLiteral("stm"),  QStringLiteral("far"),
+            QStringLiteral("amf"), QStringLiteral("ams"),  QStringLiteral("dbm"),
+            QStringLiteral("med"), QStringLiteral("mid")
+        };
+    }
+
+    void ModTrackerPlayback::unload() {
+        stop();
+        m_module.reset();
+        m_duration.store(0.0);
+        m_position.store(0.0);
+        emit metadataChanged();
+    }
+
+    bool ModTrackerPlayback::isTrackerFile(const QString& path) const {
+        const QString ext = QFileInfo(path).suffix().toLower();
+        return supportedExtensions().contains(ext);
+    }
+
     // ============================================================================
     // AudioEngine Implementation
     // ============================================================================
@@ -844,6 +868,36 @@ namespace Aegis {
 
     void AudioEngine::EburStateDeleter::operator()(ebur128_state* p) const {
         if (p) ebur128_destroy(&p);
+    }
+
+    QVector<float> AudioEngine::calculateSpectrum(const float* data, int samples, int channels) {
+        if (!data || samples <= 0 || channels <= 0) return {};
+
+        // Mix down to mono
+        std::vector<float> mono(samples);
+        for (int i = 0; i < samples; ++i) {
+            float s = 0.0f;
+            for (int c = 0; c < channels; ++c)
+                s += data[i * channels + c];
+            mono[i] = s / channels;
+        }
+
+        const int fftSamples = qMin(samples, m_fftSize);
+        for (int i = 0; i < fftSamples; ++i)
+            m_fftIn.get()[i] = mono[i] * m_fftWindow[i];
+        for (int i = fftSamples; i < m_fftSize; ++i)
+            m_fftIn.get()[i] = 0.0f;
+
+        fftwf_execute(reinterpret_cast<fftwf_plan>(m_fftPlan));
+
+        const int bins = m_fftSize / 2 + 1;
+        QVector<float> result(bins);
+        for (int i = 0; i < bins; ++i) {
+            float re = m_fftOut.get()[i][0];
+            float im = m_fftOut.get()[i][1];
+            result[i] = std::sqrt(re * re + im * im) / m_fftSize;
+        }
+        return result;
     }
 
 } // namespace Aegis

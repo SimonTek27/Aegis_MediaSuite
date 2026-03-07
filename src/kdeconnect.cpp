@@ -191,3 +191,7 @@ QString KDEConnect::kdeConnectDownloadPath() const {
     // Standard KDE Connect download location
     return QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + "/KDE Connect";
 }
+
+void KDEConnect::requestPhoto(const QString &deviceId) {
+    Q_UNUSED(deviceId)
+}

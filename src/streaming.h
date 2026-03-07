@@ -2,8 +2,9 @@
 
 #include <QObject>
 #include <QProcess>
-#include <QNetworkAccessManager>
 #include <QMap>
+
+class QNetworkAccessManager;
 
 enum class ServiceType { YouTube, Spotify, Radio, IPTV };
 
@@ -40,6 +41,7 @@ public:
     Q_INVOKABLE void resolveStream(const QString &id, ServiceType type);
 
 signals:
+        void serviceStatusChanged(const QString& service, bool available);
     void availabilityChanged();
     void searchResults(const QVariantList &results);
     void streamResolved(const QString &url, const QVariantMap &metadata);

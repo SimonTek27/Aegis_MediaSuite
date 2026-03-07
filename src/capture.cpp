@@ -13,6 +13,8 @@
 //
 
 #include "capture.h"
+#include <QScreen>
+#include <QGuiApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QDebug>
@@ -22,10 +24,17 @@
 #include <QMediaDevices>
 #include <QCameraDevice>
 #include <QtConcurrent/QtConcurrent>
+#include <QThreadPool>
 
 // GStreamer includes
+#ifdef HAVE_GSTREAMER
+#ifdef HAVE_GSTREAMER
 #include <gst/gst.h>
+#endif
+#endif
+#ifdef HAVE_GSTREAMER
 #include <gst/pbutils/pbutils.h>
+#endif
 
 // Portal D-Bus constants
 static const char* PORTAL_SERVICE   = "org.freedesktop.portal.Desktop";
@@ -72,7 +81,7 @@ Capture::Capture(QObject *parent)
     m_statsTimer->start(500);
 
     // Enumerate sources in background
-    QtConcurrent::run([this]() {
+    QThreadPool::globalInstance()->start([this]() {
         enumerateV4L2Sources();
         enumeratePulseAudioSources();
         enumerateDVBSources();
@@ -836,7 +845,8 @@ bool Capture::initializeGStreamer()
 
     // Check if GStreamer is available
     guint major, minor, micro;
-    gst_version(&major, &minor, &micro);
+    guint nano = 0;
+    gst_version(&major, &minor, &micro, &nano);
     qDebug() << "GStreamer version:" << major << "." << minor << "." << micro;
 
     return true;
@@ -945,12 +955,12 @@ bool Capture::buildPipelineForSource(const CaptureSourceInfo &source, const QStr
 
     qDebug() << "Building pipeline:" << pipelineDesc;
 
-    GError *error = nullptr;
-    m_pipeline = gst_parse_launch(pipelineDesc.toUtf8().constData(), &error);
+    GError *gstErr = nullptr;
+    m_pipeline = gst_parse_launch(pipelineDesc.toUtf8().constData(), &gstErr);
 
-    if (error) {
-        emit error(QString("Failed to build pipeline: %1").arg(error->message));
-        g_error_free(error);
+    if (gstErr) {
+        emit error(QString("Failed to build pipeline: %1").arg(gstErr->message));
+        g_error_free(gstErr);
         return false;
     }
 
@@ -1179,12 +1189,12 @@ bool Capture::captureScreenshot(const QString &sourceId, const QString &outputPa
                                  .arg(size.width()).arg(size.height()));
         }
 
-        GError *error = nullptr;
-        GstElement *pipeline = gst_parse_launch(pipelineDesc.toUtf8().constData(), &error);
+        GError *gstErr = nullptr;
+        GstElement *pipeline = gst_parse_launch(pipelineDesc.toUtf8().constData(), &gstErr);
 
-        if (error) {
-            emit error(QString("Failed to build screenshot pipeline: %1").arg(error->message));
-            g_error_free(error);
+        if (gstErr) {
+            emit error(QString("Failed to build screenshot pipeline: %1").arg(gstErr->message));
+            g_error_free(gstErr);
             return false;
         }
 
@@ -1249,15 +1259,15 @@ bool Capture::recordAudio(const QString &audioSourceId, const QString &outputPat
         ).arg(source.audioStreams.first().id).arg(outPath);
 
         if (durationSeconds > 0) {
-            pipelineDesc.prepend(QString("fakesrc ! identity sleep-time=%1 ! ".arg(durationSeconds * 1000000)));
+            pipelineDesc.prepend(QString("fakesrc ! identity sleep-time=%1 ! ").arg(durationSeconds * 1000000));
         }
 
-        GError *error = nullptr;
-        m_pipeline = gst_parse_launch(pipelineDesc.toUtf8().constData(), &error);
+        GError *gstErr = nullptr;
+        m_pipeline = gst_parse_launch(pipelineDesc.toUtf8().constData(), &gstErr);
 
-        if (error) {
-            emit error(QString("Failed to build audio pipeline: %1").arg(error->message));
-            g_error_free(error);
+        if (gstErr) {
+            emit error(QString("Failed to build audio pipeline: %1").arg(gstErr->message));
+            g_error_free(gstErr);
             return false;
         }
 
@@ -1270,7 +1280,7 @@ bool Capture::recordAudio(const QString &audioSourceId, const QString &outputPat
 // Utilities
 // ============================================================================
 
-QString Capture::generateOutputPath(const QString &extension)
+QString Capture::generateOutputPath(const QString &extension) const
 {
     QString baseDir = m_exportOptions.outputDir.isEmpty()
     ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) + "/Aegis"

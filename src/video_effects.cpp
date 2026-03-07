@@ -70,10 +70,10 @@ namespace Aegis {
         // Find surrounding keyframes
         auto it = m_keyframes.lowerBound(pts.pts);
         if (it == m_keyframes.begin()) return it.value();
-        if (it == m_keyframes.end()) return (it - 1).value();
+        if (it == m_keyframes.end()) return std::prev(it).value();
 
         auto next = it;
-        auto prev = it - 1;
+        auto prev = std::prev(it);
 
         // Linear interpolation
         qint64 diff = next.key() - prev.key();
@@ -506,5 +506,74 @@ void AudioVisualizerEffect::processGL(QOpenGLFramebufferObject* input,
 
                                           return info;
                                       }
+
+    // ─── Missing subclass constructors and processGL stubs ───────────────────
+
+    BlurEffect::BlurEffect(QObject* parent)
+        : VideoEffect(QStringLiteral("blur"), parent) {}
+
+    void BlurEffect::processGL(QOpenGLFramebufferObject* input,
+                               QOpenGLFramebufferObject* output,
+                               const VideoPTS& pts) {
+        Q_UNUSED(input) Q_UNUSED(output) Q_UNUSED(pts)
+    }
+
+    ChromaKeyEffect::ChromaKeyEffect(QObject* parent)
+        : VideoEffect(QStringLiteral("chromakey"), parent) {}
+
+    void ChromaKeyEffect::processGL(QOpenGLFramebufferObject* input,
+                                    QOpenGLFramebufferObject* output,
+                                    const VideoPTS& pts) {
+        Q_UNUSED(input) Q_UNUSED(output) Q_UNUSED(pts)
+    }
+
+    LUTEffect::LUTEffect(QObject* parent)
+        : VideoEffect(QStringLiteral("lut"), parent) {}
+
+    void LUTEffect::processGL(QOpenGLFramebufferObject* input,
+                              QOpenGLFramebufferObject* output,
+                              const VideoPTS& pts) {
+        Q_UNUSED(input) Q_UNUSED(output) Q_UNUSED(pts)
+    }
+
+    DistortionEffect::DistortionEffect(QObject* parent)
+        : VideoEffect(QStringLiteral("distortion"), parent) {}
+
+    void DistortionEffect::processGL(QOpenGLFramebufferObject* input,
+                                     QOpenGLFramebufferObject* output,
+                                     const VideoPTS& pts) {
+        Q_UNUSED(input) Q_UNUSED(output) Q_UNUSED(pts)
+    }
+
+    void DistortionEffect::setDistortionType(DistortionType type) { m_type = type; }
+
+    TransitionEffect::TransitionEffect(QObject* parent)
+        : VideoEffect(QStringLiteral("transition"), parent) {}
+
+    void TransitionEffect::processGL(QOpenGLFramebufferObject* input,
+                                     QOpenGLFramebufferObject* output,
+                                     const VideoPTS& pts) {
+        Q_UNUSED(input) Q_UNUSED(output) Q_UNUSED(pts)
+    }
+
+    void TransitionEffect::setTransitionType(TransitionType type) { m_type = type; }
+
+    GrainEffect::GrainEffect(QObject* parent)
+        : VideoEffect(QStringLiteral("grain"), parent) {}
+
+    void GrainEffect::processGL(QOpenGLFramebufferObject* input,
+                                QOpenGLFramebufferObject* output,
+                                const VideoPTS& pts) {
+        Q_UNUSED(input) Q_UNUSED(output) Q_UNUSED(pts)
+    }
+
+    VignetteEffect::VignetteEffect(QObject* parent)
+        : VideoEffect(QStringLiteral("vignette"), parent) {}
+
+    void VignetteEffect::processGL(QOpenGLFramebufferObject* input,
+                                   QOpenGLFramebufferObject* output,
+                                   const VideoPTS& pts) {
+        Q_UNUSED(input) Q_UNUSED(output) Q_UNUSED(pts)
+    }
 
 } // namespace Aegis

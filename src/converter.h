@@ -47,6 +47,7 @@ namespace Aegis {
          * @param parent QObject parent
          */
         explicit Converter(AudioEngine* engine, QObject *parent = nullptr);
+        ~Converter();
 
         // QML accessible API
         Q_INVOKABLE void convertFile(const QString &input, const QString &output,

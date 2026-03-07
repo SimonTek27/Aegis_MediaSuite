@@ -1,4 +1,4 @@
-// mediaplayer.cpp - Unified media player with real-time audio processing
+// mediaplayer.cpp -  Mediaplayer with real-time audio processing
 
 #include "audio.h"
 #include "audio_output.h"
@@ -155,7 +155,7 @@ namespace Aegis {
             }
         });
 
-        // Connect MPV backend signals
+        // Connect MPV backend signals - FIX: Use correct signal/slot types
         connect(d->mpvBackend.get(), &MpvBackend::positionChanged,
                 this, [this](double pos) {
                     d->position.store(pos, std::memory_order_release);
@@ -168,14 +168,22 @@ namespace Aegis {
                     emit durationChanged(static_cast<qint64>(dur * 1000));
                 });
 
+        // FIX: Use lambda with correct parameter type matching the signal
         connect(d->mpvBackend.get(), &MpvBackend::stateChanged,
-                this, [this](int state) {
-                    onMpvStateChanged(state);
+                this, [this](PlaybackState state) {
+                    onMpvStateChanged(static_cast<int>(state));
                 });
 
+        // FIX: Use lambda with correct parameter type
         connect(d->mpvBackend.get(), &MpvBackend::metadataChanged,
-                this, [this](const QVariantMap& md) {
-                    syncMetadataFromMpv(md);
+                this, [this](const TrackMetadata& md) {
+                    QVariantMap map;
+                    map["title"] = md.title;
+                    map["artist"] = md.artist;
+                    map["album"] = md.album;
+                    map["year"] = md.year;
+                    map["hasVideo"] = md.hasVideo;
+                    syncMetadataFromMpv(map);
                 });
 
         connect(d->mpvBackend.get(), &MpvBackend::finished,
@@ -206,16 +214,12 @@ namespace Aegis {
 
         // Connect audio output signals
         if (d->audioOutput) {
-            connect(d->audioOutput.get(), &AudioOutput::stateChanged,
-                    this, [this](bool playing) {
-                        qDebug() << "Audio output state changed:" << playing;
-                    });
+            // AudioOutput state/underrun signals - connect if available
+            QObject::connect(d->audioOutput.get(), SIGNAL(stateChanged(bool)),
+                             this, SLOT(onAudioOutputStateChanged(bool)), Qt::QueuedConnection);
 
-            connect(d->audioOutput.get(), &AudioOutput::underrunDetected,
-                    this, [this]() {
-                        d->underruns.fetch_add(1, std::memory_order_relaxed);
-                        qWarning() << "Audio underrun #" << d->underruns.load();
-                    });
+            QObject::connect(d->audioOutput.get(), SIGNAL(underrunDetected()),
+                             this, SLOT(onAudioOutputUnderrun()), Qt::QueuedConnection);
 
             connect(d->audioOutput.get(), &AudioOutput::error,
                     this, &MediaPlayer::onMpvError);
@@ -617,7 +621,7 @@ namespace Aegis {
         d->metadata.artist = metadata.value("artist").toString();
         d->metadata.album = metadata.value("album").toString();
         d->metadata.year = metadata.value("year").toInt();
-        d->metadata.hasVideo = metadata.value("vid", false).toBool();
+        d->metadata.hasVideo = metadata.value("hasVideo", false).toBool();
         d->metadata.isTracker = false;
 
         emit metadataChanged(d->metadata);
@@ -693,9 +697,10 @@ namespace Aegis {
         if (!d->playlist) return;
 
         auto item = d->playlist->at(index);
-        if (item.isValid()) {
+        // PlaylistEntry::url is a QUrl field (not a method); check it's non-empty
+        if (!item.url.isEmpty()) {
             d->currentPlaylistIndex.store(index, std::memory_order_release);
-            load(item.url());
+            load(item.url);
         }
     }
 
@@ -780,6 +785,70 @@ namespace Aegis {
 
     AudioOutput* MediaPlayer::audioOutput() {
         return d->audioOutput.get();
+    }
+
+} // namespace Aegis
+
+namespace Aegis {
+
+    // ── enqueue ──────────────────────────────────────────────────────────────────
+    void MediaPlayer::enqueue(const QUrl& url)
+    {
+        if (!d->playlist) {
+            load(url);
+            return;
+        }
+        load(url);
+    }
+
+    // ── currentIndex / currentMetadata ───────────────────────────────────────────
+    int MediaPlayer::currentIndex() const {
+        return d->currentPlaylistIndex.load(std::memory_order_acquire);
+    }
+    TrackMetadata MediaPlayer::currentMetadata() const { return d->metadata; }
+
+    // ── trackerChannels / trackerPatterns ─────────────────────────────────────────
+    int MediaPlayer::trackerChannels() const { return d->metadata.channels; }
+    int MediaPlayer::trackerPatterns() const { return d->metadata.patterns; }
+
+    // ── Repeat / Shuffle / Muted ─────────────────────────────────────────────────
+    void MediaPlayer::setRepeatMode(RepeatMode mode) {
+        d->settings->setValue("Playback/RepeatMode", static_cast<int>(mode));
+    }
+    MediaPlayer::RepeatMode MediaPlayer::repeatMode() const {
+        return static_cast<RepeatMode>(d->settings->value("Playback/RepeatMode", 0).toInt());
+    }
+    void MediaPlayer::setShuffle(bool enabled) {
+        d->settings->setValue("Playback/Shuffle", enabled);
+    }
+    bool MediaPlayer::shuffle() const {
+        return d->settings->value("Playback/Shuffle", false).toBool();
+    }
+    bool MediaPlayer::isMuted() const { return muted(); }
+
+    // ── onAudioOutputStateChanged / onAudioOutputUnderrun ────────────────────────
+    void MediaPlayer::onAudioOutputStateChanged(bool /*playing*/) {}
+    void MediaPlayer::onAudioOutputUnderrun() {
+        d->underruns.fetch_add(1, std::memory_order_relaxed);
+        qWarning() << "Audio underrun #" << d->underruns.load();
+    }
+    // ── onMpvAudioData ────────────────────────────────────────────────────────────
+    void MediaPlayer::onMpvAudioData(const QByteArray& /*data*/, int /*sampleRate*/) {}
+    void MediaPlayer::onMpvPositionChanged(double pos) {
+        d->position.store(pos, std::memory_order_release);
+        emit positionChanged(static_cast<qint64>(pos * 1000));
+    }
+    void MediaPlayer::onMpvDurationChanged(double dur) {
+        d->duration.store(dur, std::memory_order_release);
+        emit durationChanged(static_cast<qint64>(dur * 1000));
+    }
+    void MediaPlayer::onMpvMetadataChanged(const QVariantMap& md) { syncMetadataFromMpv(md); }
+    void MediaPlayer::onTrackerPositionChanged() {
+        if (d->activeBackend.load() == BackendType::Tracker) {
+            double pos = d->audioEngine->tracker()->position();
+            d->position.store(pos, std::memory_order_release);
+            emit positionChanged(static_cast<qint64>(pos * 1000));
+        }
     }
 
 } // namespace Aegis

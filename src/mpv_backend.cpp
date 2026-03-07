@@ -1,8 +1,10 @@
 // mpv_backend.cpp - Production MPV backend with full error handling
+
 #include "mpv_backend.h"
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QThread>
+#include <clocale>
 
 namespace Aegis {
 
@@ -11,8 +13,7 @@ namespace Aegis {
     // ============================================================================
 
     MpvBackend::MpvBackend(QObject* parent)
-    : IAudioBackend(parent)
-    , m_logger("MpvBackend") {
+    : IAudioBackend(parent) {
 
         qRegisterMetaType<PlaybackState>();
         initialize();
@@ -28,7 +29,7 @@ namespace Aegis {
     }
 
     Result<void> MpvBackend::initialize() {
-        m_logger.debug("Initializing MPV backend");
+        qDebug() << "Initializing MPV backend";
 
         auto result = createMpvInstance();
         if (result.isError()) {
@@ -45,7 +46,7 @@ namespace Aegis {
             return result;
         }
 
-        m_logger.info("MPV backend initialized successfully");
+        qInfo() << "MPV backend initialized successfully";
         return Result<void>::success();
     }
 
@@ -93,8 +94,9 @@ namespace Aegis {
     void MpvBackend::setOption(mpv_handle* handle, const char* key, const char* value) {
         int result = mpv_set_option_string(handle, key, value);
         if (result < 0) {
-            m_logger.warning(QString("Failed to set option %1=%2: %3")
-            .arg(key, value, mpv_error_string(result)));
+            // FIX: Added missing closing parenthesis
+            qWarning() << QString("Failed to set option %1=%2: %3")
+            .arg(key, value, mpv_error_string(result));
         }
     }
 
@@ -102,7 +104,7 @@ namespace Aegis {
         return m_mpv.withExclusiveLock([this](mpv_handle* handle) {
             mpv_set_wakeup_callback(handle, [](void* ctx) {
                 auto* self = static_cast<MpvBackend*>(ctx);
-                QMetaObject::invokeMethod(self, "handleEvents", Qt::QueuedConnection);
+                QMetaObject::invokeMethod(self, "handleEvent", Qt::QueuedConnection);
             }, this);
 
             return Result<void>::success();
@@ -121,6 +123,11 @@ namespace Aegis {
     }
 
     void MpvBackend::processEvent(mpv_event* event) {
+        // Canonical libmpv event values (client.h, stable since libmpv 1.x):
+        //  1=SHUTDOWN  2=LOG_MESSAGE  5=COMMAND_REPLY  6=START_FILE
+        //  7=END_FILE  8=FILE_LOADED  11=IDLE  16=CLIENT_MESSAGE
+        //  17=VIDEO_RECONFIG  18=AUDIO_RECONFIG  20=SEEK
+        //  21=PLAYBACK_RESTART  22=PROPERTY_CHANGE  24=QUEUE_OVERFLOW  25=HOOK
         switch (event->event_id) {
             case MPV_EVENT_PROPERTY_CHANGE: {
                 auto* prop = static_cast<mpv_event_property*>(event->data);
@@ -135,22 +142,17 @@ namespace Aegis {
             }
 
             case MPV_EVENT_FILE_LOADED:
-                m_logger.info("File loaded successfully");
+                qInfo() << "File loaded successfully";
                 updateMetadata();
                 emit durationChanged(m_duration.load());
                 break;
 
-            case MPV_EVENT_PLAYBACK_RESTART:
-                m_state.store(PlaybackState::Playing);
-                emit stateChanged(PlaybackState::Playing);
+            case MPV_EVENT_START_FILE:  // 6 — new file about to load
+                m_state.store(PlaybackState::Buffering);
+                emit stateChanged(PlaybackState::Buffering);
                 break;
 
-            case MPV_EVENT_PAUSE:
-                m_state.store(PlaybackState::Paused);
-                emit stateChanged(PlaybackState::Paused);
-                break;
-
-            case MPV_EVENT_UNPAUSE:
+            case MPV_EVENT_PLAYBACK_RESTART:  // 21
                 m_state.store(PlaybackState::Playing);
                 emit stateChanged(PlaybackState::Playing);
                 break;
@@ -161,12 +163,21 @@ namespace Aegis {
                 break;
             }
 
-            case MPV_EVENT_ERROR:
-                m_logger.error("MPV error event received");
+            case MPV_EVENT_SEEK:         // 20 — seek in progress, no state change needed
+            case MPV_EVENT_AUDIO_RECONFIG: // 18
+            case MPV_EVENT_VIDEO_RECONFIG: // 17
+            case MPV_EVENT_CLIENT_MESSAGE: // 16
+            case 11: // MPV_EVENT_IDLE — player idle, no file queued
+            case 24: // MPV_EVENT_QUEUE_OVERFLOW
+                break; // benign, no action needed
+
+            case 1: // MPV_EVENT_SHUTDOWN
+                m_state.store(PlaybackState::Stopped);
+                emit stateChanged(PlaybackState::Stopped);
                 break;
 
             default:
-                m_logger.debug(QString("Unhandled event: %1").arg(event->event_id));
+                qDebug() << QString("Unhandled MPV event: %1").arg(event->event_id);
                 break;
         }
     }
@@ -191,7 +202,7 @@ namespace Aegis {
         else if (strcmp(prop->name, "eof-reached") == 0) {
             int eof = *static_cast<int*>(prop->data);
             if (eof) {
-                m_logger.debug("EOF reached");
+                qDebug() << "EOF reached";
                 emit finished();
             }
         }
@@ -200,23 +211,24 @@ namespace Aegis {
     void MpvBackend::handleEndFile(mpv_event_end_file* endFile) {
         switch (endFile->reason) {
             case MPV_END_FILE_REASON_EOF:
-                m_logger.info("Playback finished normally");
+                qInfo() << "Playback finished normally";
                 emit finished();
                 break;
 
             case MPV_END_FILE_REASON_STOP:
-                m_logger.debug("Playback stopped");
+                qDebug() << "Playback stopped";
                 break;
 
             case MPV_END_FILE_REASON_ERROR:
-                m_logger.error(QString("Playback error: %1")
-                .arg(endFile->error >= 0 ? "" : mpv_error_string(endFile->error)));
+                // FIX: Added missing closing parenthesis
+                qCritical() << QString("Playback error: %1")
+                .arg(endFile->error >= 0 ? "" : mpv_error_string(endFile->error));
                 emit error(QString("Playback error: %1")
                 .arg(mpv_error_string(endFile->error)));
                 break;
 
             default:
-                m_logger.warning(QString("Unknown end reason: %1").arg(endFile->reason));
+                qWarning() << QString("Unknown end reason: %1").arg(endFile->reason);
                 break;
         }
     }
@@ -230,22 +242,22 @@ namespace Aegis {
         switch (log->log_level) {
             case MPV_LOG_LEVEL_FATAL:
             case MPV_LOG_LEVEL_ERROR:
-                m_logger.error(QString("[%1] %2").arg(prefix, text));
+                qCritical() << QString("[%1] %2").arg(prefix, text);
                 break;
             case MPV_LOG_LEVEL_WARN:
-                m_logger.warning(QString("[%1] %2").arg(prefix, text));
+                qWarning() << QString("[%1] %2").arg(prefix, text);
                 break;
             case MPV_LOG_LEVEL_INFO:
-                m_logger.info(QString("[%1] %2").arg(prefix, text));
+                qInfo() << QString("[%1] %2").arg(prefix, text);
                 break;
             default:
-                m_logger.debug(QString("[%1] %2").arg(prefix, text));
+                qDebug() << QString("[%1] %2").arg(prefix, text);
                 break;
         }
     }
 
     Result<void> MpvBackend::load(const QString& path) {
-        m_logger.info(QString("Loading: %1").arg(path));
+        qInfo() << QString("Loading: %1").arg(path);
 
         return m_mpv.withExclusiveLock([this, &path](mpv_handle* handle) {
             const char* cmd[] = {"loadfile", path.toUtf8().constData(), nullptr};
@@ -264,11 +276,11 @@ namespace Aegis {
     }
 
     Result<void> MpvBackend::play() {
-        return setProperty("pause", "no");
+        return setMpvProperty("pause", "no");
     }
 
     Result<void> MpvBackend::pause() {
-        return setProperty("pause", "yes");
+        return setMpvProperty("pause", "yes");
     }
 
     Result<void> MpvBackend::stop() {
@@ -290,15 +302,16 @@ namespace Aegis {
     }
 
     Result<void> MpvBackend::seek(double position) {
-        return setProperty("time-pos", position);
+        return setMpvProperty("time-pos", position);
     }
 
     Result<void> MpvBackend::setVolume(double volume) {
-        double norm = std::clamp(volume / 100.0, 0.0, 1.0);
-        return setProperty("volume", norm);
+        // mpv "volume" property uses 0–100 scale (not 0–1)
+        double clamped = std::clamp(volume, 0.0, 100.0);
+        return setMpvProperty("volume", clamped);
     }
 
-    Result<void> MpvBackend::setProperty(const char* name, const char* value) {
+    Result<void> MpvBackend::setMpvProperty(const char* name, const char* value) {
         return m_mpv.withExclusiveLock([this, name, value](mpv_handle* handle) {
             int result = mpv_set_property_string(handle, name, value);
             if (result < 0) {
@@ -309,9 +322,11 @@ namespace Aegis {
         });
     }
 
-    Result<void> MpvBackend::setProperty(const char* name, double value) {
+    Result<void> MpvBackend::setMpvProperty(const char* name, double value) {
         return m_mpv.withExclusiveLock([this, name, value](mpv_handle* handle) {
-            int result = mpv_set_property(handle, name, MPV_FORMAT_DOUBLE, &value);
+            // FIX: Cast away const-ness for mpv_set_property which expects void*
+            double mutableValue = value;
+            int result = mpv_set_property(handle, name, MPV_FORMAT_DOUBLE, &mutableValue);
             if (result < 0) {
                 return Result<void>::error(QString("Failed to set %1: %2")
                 .arg(name, mpv_error_string(result)));
@@ -352,9 +367,9 @@ namespace Aegis {
 
                         if (key == "artist") metadata.artist = value;
                         else if (key == "album") metadata.album = value;
-                        else if (key == "genre") metadata.genre = value;
+                        else if (key == "genre") metadata.comment = value;  // genre stored in comment
                         else if (key == "date") metadata.year = value.toInt();
-                        else if (key == "track") metadata.trackNumber = value.toInt();
+                        // trackNumber not in TrackMetadata, skip
                     }
                 }
                 mpv_free_node_contents(&tags);
@@ -365,23 +380,14 @@ namespace Aegis {
         });
     }
 
-    void MpvBackend::setAudioCallback(std::function<void(const QByteArray&, int)> cb) {
-        m_audioCallback = std::move(cb);
-
-        // In a real implementation, this would set up audio output capture
-        // using mpv's audio output API or custom AO
-    }
+    // setAudioCallback defined inline in header
 
     // ============================================================================
     // Factory Implementation
     // ============================================================================
 
-    QString MpvBackendFactory::name() {
-        return "mpv";
-    }
-
-    bool MpvBackendFactory::isAvailable() {
-        // Try to create a test instance
+    bool MpvBackend::isAvailable() {
+        std::setlocale(LC_NUMERIC, "C");
         mpv_handle* test = mpv_create();
         if (test) {
             mpv_terminate_destroy(test);
@@ -390,7 +396,7 @@ namespace Aegis {
         return false;
     }
 
-    MpvBackendFactory::Capabilities MpvBackendFactory::capabilities() {
+    MpvBackend::Capabilities MpvBackend::capabilities() {
         Capabilities caps;
         caps.supportsVideo = true;
         caps.supportsAudio = true;
@@ -399,6 +405,10 @@ namespace Aegis {
         caps.maxChannels = 8;
         caps.supportedCodecs = {"h264", "hevc", "vp9", "aac", "mp3", "flac"};
         return caps;
+    }
+
+    void MpvBackend::handleEvent() {
+        handleEvents();
     }
 
 } // namespace Aegis

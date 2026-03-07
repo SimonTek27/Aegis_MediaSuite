@@ -215,6 +215,15 @@ ApplicationWindow {
         id: editorLoader
         anchors.fill: parent
         source: editorPages[currentMode] ? editorPages[currentMode] : "qrc:/qml/ui_launcher.qml"
+
+        // When the launcher emits appLaunchRequested, switch the active mode.
+        onLoaded: {
+            if (item && typeof item.appLaunchRequested !== "undefined") {
+                item.appLaunchRequested.connect(function(mode) {
+                    rootWindow.switchMode(mode)
+                })
+            }
+        }
     }
 
     // ============================================
@@ -834,6 +843,9 @@ ApplicationWindow {
     function switchMode(mode, qmlSource, options = {}) {
         if (currentMode === mode && !options.forceReload) return
 
+        // Resolve source from editorPages when caller doesn't supply it
+        if (!qmlSource) qmlSource = editorPages[mode] || editorPages["launcher"]
+
             console.log("🔄 Switching to mode:", mode, "from:", currentMode)
 
             // Store previous mode
@@ -863,14 +875,18 @@ ApplicationWindow {
             addToRecentApps(mode)
 
             // Transition effect
-            if (!options.silent) {
+            // editorLoader.source is bound to editorPages[currentMode], so setting
+            // currentMode above is enough for editorLoader to reload the right QML.
+            // themeLoader is used only for overlay/context modes not in editorPages.
+            if (editorPages[mode]) {
+                // editorLoader handles it via its source binding — nothing extra needed.
+            } else if (!options.silent) {
                 themeLoader.opacity = 0
                 modeSwitchTimer.modeSource = qmlSource
                 modeSwitchTimer.contextProperties = options.context || {}
                 modeSwitchTimer.previousMode = previousMode
                 modeSwitchTimer.start()
             } else {
-                // Direct load
                 themeLoader.setSource(qmlSource, getContextProperties(mode, options.context))
             }
 
@@ -1039,11 +1055,11 @@ ApplicationWindow {
     }
 
     function showBurner() {
-        switchMode("burner", "qrc:/qml/ui_discburner.qml")
+        switchMode("discburner", "qrc:/qml/ui_discburner.qml")
     }
 
     function showLabelMaker() {
-        switchMode("labelmaker", "qrc:/qml/ui_disc_labelmaker.qml")
+        switchMode("disc_labelmaker", "qrc:/qml/ui_disc_labelmaker.qml")
     }
 
     function showKaraoke() {
@@ -1051,7 +1067,7 @@ ApplicationWindow {
     }
 
     function showDJMix() {
-        switchMode("djmixer", "qrc:/qml/ui_djmixer.qml")
+        switchMode("djmix", "qrc:/qml/ui_djmixer.qml")
     }
 
     function showConverter() {

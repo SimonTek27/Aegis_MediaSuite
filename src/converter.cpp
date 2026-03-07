@@ -1,5 +1,6 @@
 // converter.cpp
 #include "converter.h"
+#include "mpv_backend.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -17,6 +18,8 @@ namespace Aegis {
         , m_engine(engine)
     {
     }
+
+    Converter::~Converter() = default;
 
     bool Converter::converting() const { return m_converting; }
 

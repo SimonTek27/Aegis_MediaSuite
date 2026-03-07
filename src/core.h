@@ -1,4 +1,5 @@
 // core.h - Clean Architecture Core with Dependency Injection
+
 #pragma once
 
 #include <QObject>
@@ -9,6 +10,7 @@
 #include <optional>
 #include <concepts>
 #include "raii_wrappers.h"
+#include "mediaplayer.h"
 
 namespace Aegis {
 
@@ -16,9 +18,11 @@ namespace Aegis {
     // Pure Interfaces (Dependency Inversion)
     // ============================================================================
 
-    class IAudioBackend {
+    class IAudioBackend : public QObject {
+        Q_OBJECT
     public:
-        virtual ~IAudioBackend() = default;
+        explicit IAudioBackend(QObject* parent = nullptr) : QObject(parent) {}
+        ~IAudioBackend() override = default;
 
         virtual Result<void> load(const QString& path) = 0;
         virtual Result<void> play() = 0;
@@ -34,6 +38,14 @@ namespace Aegis {
         virtual bool hasVideo() const = 0;
 
         virtual void setAudioCallback(std::function<void(const QByteArray&, int)> cb) = 0;
+
+    signals:
+        void stateChanged(PlaybackState state);
+        void positionChanged(double position);
+        void durationChanged(double duration);
+        void metadataChanged(const TrackMetadata& metadata);
+        void finished();
+        void error(const QString& message);
     };
 
     class IVideoBackend {
@@ -68,13 +80,13 @@ namespace Aegis {
     // ============================================================================
 
     template<typename T>
-    concept BackendType = requires {
+    concept BackendConcept = requires {
         typename T::Capabilities;
         { T::name() } -> std::convertible_to<QString>;
         { T::isAvailable() } -> std::convertible_to<bool>;
     };
 
-    template<BackendType T>
+    template<BackendConcept T>
     class BackendFactory {
     public:
         using Capabilities = typename T::Capabilities;
@@ -423,6 +435,14 @@ namespace Aegis {
         void currentTrackChanged(const PlaylistItem& item);
         void playlistFinished();
         void error(const QString& message);
+
+        // FIX: Moved private helper declarations before private slots
+    private:
+        void dequeue(int index);
+        QString currentTitle() const;
+        void loadTrackImpl(int index);
+        void updateMetadata();
+        void onBackendPositionChanged(double pos);
 
     private slots:
         void onAudioBackendStateChanged(PlaybackState state) {

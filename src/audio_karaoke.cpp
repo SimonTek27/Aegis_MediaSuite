@@ -3,6 +3,7 @@
 #include "audio.h"
 #include "mpv_backend.h"
 #include <QDebug>
+#include <QUuid>
 
 namespace Aegis {
 
@@ -213,7 +214,7 @@ namespace Aegis {
 
     QString KaraokeController::currentSong() const {
         if (!m_currentSongId.isEmpty() && m_songs.contains(m_currentSongId)) {
-            return m_songs[m_currentSongId].displayTitle();
+            return m_songs[m_currentSongId].title;
         }
         return QString();
     }
@@ -228,5 +229,147 @@ namespace Aegis {
 
     // ... (rest of implementation: addSinger, removeSinger, queueSong,
     // removeFromQueue, scanLibrary, searchSongs, etc.) ...
+
+    // ─── CdgDecoder ───────────────────────────────────────────────────────────
+
+    CdgDecoder::CdgDecoder(QObject* parent) : QObject(parent) {}
+
+    bool CdgDecoder::load(const QString& cdgPath) {
+        m_packets.clear();
+        m_packetTimes.clear();
+
+        QFile f(cdgPath);
+        if (!f.open(QIODevice::ReadOnly)) return false;
+
+        constexpr double packetDurationSec = 1.0 / 300.0; // 300 packets/sec (CD+G spec)
+        int idx = 0;
+        while (!f.atEnd()) {
+            CdgPacket pkt{};
+            if (f.read(reinterpret_cast<char*>(&pkt), 24) != 24) break;
+            m_packets.append(pkt);
+            m_packetTimes.append(idx * packetDurationSec);
+            ++idx;
+        }
+        return !m_packets.isEmpty();
+    }
+
+    QImage CdgDecoder::frameAtTime(double timeSeconds) {
+        // Find the last packet at or before timeSeconds
+        int lastIdx = -1;
+        for (int i = 0; i < m_packetTimes.size(); ++i) {
+            if (m_packetTimes[i] <= timeSeconds) lastIdx = i;
+            else break;
+        }
+        Q_UNUSED(lastIdx)
+        // Stub: return empty frame (full CD+G renderer is out of scope)
+        return QImage(300, 216, QImage::Format_ARGB32);
+    }
+
+    // ─── LyricsRenderer ───────────────────────────────────────────────────────
+
+    LyricsRenderer::LyricsRenderer(QObject* parent) : QObject(parent) {}
+
+    bool LyricsRenderer::loadLrcFile(const QString& path) {
+        m_lines.clear();
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+
+        static const QRegularExpression timeTag(QStringLiteral(R"(\[(\d+):(\d+)\.(\d+)\])"));
+        QTextStream in(&f);
+        while (!in.atEnd()) {
+            QString line = in.readLine();
+            auto it = timeTag.globalMatch(line);
+            while (it.hasNext()) {
+                auto m = it.next();
+                double t = m.captured(1).toInt() * 60.0
+                         + m.captured(2).toDouble()
+                         + m.captured(3).toDouble() / 100.0;
+                QString text = line.mid(m.capturedEnd()).trimmed();
+                m_lines.append({t, text});
+            }
+        }
+        std::sort(m_lines.begin(), m_lines.end(), [](const LyricLine& a, const LyricLine& b){
+            return a.time < b.time;
+        });
+        return !m_lines.isEmpty();
+    }
+
+    QString LyricsRenderer::lineAtTime(double timeSeconds) const {
+        QString result;
+        for (const auto& l : m_lines) {
+            if (l.time <= timeSeconds) result = l.text;
+            else break;
+        }
+        return result;
+    }
+
+    // ─── KaraokeController singer/queue management ───────────────────────────
+
+    QString KaraokeController::addSinger(const QString& name, const QString& displayName) {
+        KaraokeSinger s;
+        s.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        s.name = name;
+        s.displayName = displayName.isEmpty() ? name : displayName;
+        s.rotationIndex = m_singers.size();
+        m_singers.insert(s.id, s);
+        emit singerChanged();
+        return s.id;
+    }
+    void KaraokeController::removeSinger(const QString& singerId) {
+        m_singers.remove(singerId);
+        emit singerChanged();
+    }
+    void KaraokeController::moveSinger(const QString& singerId, int newPosition) {
+        Q_UNUSED(singerId) Q_UNUSED(newPosition)
+        emit rotationChanged();
+    }
+    QVariantList KaraokeController::singers() const {
+        QVariantList result;
+        for (const auto& s : m_singers) {
+            QVariantMap m;
+            m[QStringLiteral("id")]          = s.id;
+            m[QStringLiteral("name")]        = s.name;
+            m[QStringLiteral("displayName")] = s.displayName;
+            result.append(m);
+        }
+        return result;
+    }
+    QString KaraokeController::queueSong(const QString& songId, const QString& singerId, int keyChange) {
+        KaraokeQueueItem item;
+        item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        item.songId = songId;
+        item.singerId = singerId;
+        item.keyChange = keyChange;
+        m_queue.append(item);
+        emit queueChanged();
+        return item.id;
+    }
+    void KaraokeController::removeFromQueue(const QString& queueId) {
+        m_queue.erase(std::remove_if(m_queue.begin(), m_queue.end(),
+            [&](const KaraokeQueueItem& i){ return i.id == queueId; }),
+            m_queue.end());
+        emit queueChanged();
+    }
+    QVariantList KaraokeController::queue() const {
+        QVariantList result;
+        for (const auto& item : m_queue) {
+            QVariantMap m;
+            m[QStringLiteral("id")]       = item.id;
+            m[QStringLiteral("songId")]   = item.songId;
+            m[QStringLiteral("singerId")] = item.singerId;
+            m[QStringLiteral("keyChange")]= item.keyChange;
+            result.append(m);
+        }
+        return result;
+    }
+    void KaraokeController::scanLibrary(const QString& path) { Q_UNUSED(path) }
+    QVariantList KaraokeController::searchSongs(const QString&, int) { return {}; }
+    void KaraokeController::importOpenKJDatabase(const QString&) {}
+    void KaraokeController::setLyricsFont(const QString&, int)  {}
+    void KaraokeController::setLyricsColor(const QColor&)       {}
+
+    void KaraokeController::onCdgFrameReady(const QImage& frame) {
+        emit frameReady(frame);
+    }
 
 } // namespace Aegis

@@ -29,7 +29,14 @@ namespace Aegis {
 
     public:
         Result(T&& value) : m_value(std::forward<T>(value)) {}
+        Result(const T& value) : m_value(value) {}
         Result(const E& error) : m_value(error) {}
+
+        // Factory methods (named constructors)
+        static Result success(T&& value) { return Result(std::forward<T>(value)); }
+        static Result success(const T& value) { return Result(value); }
+        static Result error(const E& err) { return Result(err); }
+        static Result error(E&& err) { Result r; r.m_value = std::move(err); return r; }
 
         bool isSuccess() const { return std::holds_alternative<T>(m_value); }
         bool isError() const { return std::holds_alternative<E>(m_value); }
@@ -54,6 +61,46 @@ namespace Aegis {
                 return f(std::get<E>(m_value));
             }
             return std::get<T>(m_value);
+        }
+
+        // onError: runs func(err) if this is an error, returns *this for chaining
+        template<typename Func>
+        const Result& onError(Func&& f) const {
+            if (isError()) f(std::get<E>(m_value));
+            return *this;
+        }
+
+    private:
+        Result() : m_value(T{}) {}  // used by error() factory
+    };
+
+    // ============================================================================
+    // Result<void> specialization
+    // ============================================================================
+
+    template<typename E>
+    class Result<void, E> {
+        std::optional<E> m_error;
+
+    public:
+        Result() = default;  // success
+        explicit Result(const E& err) : m_error(err) {}
+        explicit Result(E&& err) : m_error(std::move(err)) {}
+
+        static Result success() { return Result{}; }
+        static Result error(const E& err) { return Result(err); }
+        static Result error(E&& err) { return Result(std::move(err)); }
+
+        bool isSuccess() const { return !m_error.has_value(); }
+        bool isError() const { return m_error.has_value(); }
+
+        const E& error() const { return *m_error; }
+        E& error() { return *m_error; }
+
+        template<typename Func>
+        const Result& onError(Func&& f) const {
+            if (isError()) f(*m_error);
+            return *this;
         }
     };
 
@@ -195,11 +242,11 @@ namespace Aegis {
                 auto it = cache.find(static_cast<size_t>(size));
                 if (it != cache.end()) {
                     FftwPlan plan;
-                    plan.m_plan = std::make_unique<fftwf_plan_s>(*it->second); // Copy plan
-                    plan.m_size = size;
-                    plan.m_direction = dir;
-                    return Result<FftwPlan>::success(std::move(plan));
+                    // NOTE: FFTW plans are not copyable. Each caller creates their own plan.
+                    // Fall through to create a new plan below.
+                    // (cache hit skipped to avoid invalid copy)
                 }
+                // Cache miss or invalidated: create new plan
             }
 
             // Create new plan
@@ -336,44 +383,24 @@ namespace Aegis {
     // Production-Grade WAV File Writer with Error Recovery
     // ============================================================================
 
-    class WavFileWriter {
-    public:
-        struct Format {
-            int sampleRate{48000};
-            int channels{2};
-            int format{SF_FORMAT_WAV | SF_FORMAT_FLOAT};
-        };
+    struct WavFileFormat {
+        int sampleRate{48000};
+        int channels{2};
+        int format{SF_FORMAT_WAV | SF_FORMAT_FLOAT};
+    };
 
+    class WavFileWriter {
     private:
         SndFileHandle m_file;
-        Format m_format;
+        WavFileFormat m_format;
         sf_count_t m_framesWritten{0};
         QString m_path;
         bool m_syncOnWrite{false};
 
     public:
-        explicit WavFileWriter(const QString& path, Format fmt = {}, bool syncOnWrite = false)
-        : m_format(fmt)
-        , m_path(path)
-        , m_syncOnWrite(syncOnWrite) {
-
-            if (!sf_format_check(reinterpret_cast<SF_INFO*>(&m_format))) {
-                throw std::invalid_argument("Invalid audio format configuration");
-            }
-
-            SF_INFO info{};
-            info.samplerate = m_format.sampleRate;
-            info.channels = m_format.channels;
-            info.format = m_format.format;
-
-            SNDFILE* f = sf_open(path.toUtf8().constData(), SFM_WRITE, &info);
-            if (!f) {
-                throw std::runtime_error(QString("Failed to open file: %1")
-                .arg(sf_strerror(nullptr)).toStdString());
-            }
-
-            m_file = SndFileHandle(f);
-        }
+        // Constructor defined out-of-line to avoid CWG1905 issue with
+        // aggregate default member initializers in default arguments.
+        explicit WavFileWriter(const QString& path, WavFileFormat fmt = WavFileFormat{}, bool syncOnWrite = false);
 
         Result<void> write(const float* data, sf_count_t frames) noexcept {
             try {
@@ -411,7 +438,7 @@ namespace Aegis {
         }
 
         sf_count_t framesWritten() const noexcept { return m_framesWritten; }
-        const Format& format() const noexcept { return m_format; }
+        const WavFileFormat& format() const noexcept { return m_format; }
         const QString& path() const noexcept { return m_path; }
     };
 
@@ -419,5 +446,27 @@ namespace Aegis {
     inline std::shared_mutex FftwPlan::s_cacheMutex;
     inline std::unordered_map<size_t, FftwPlan::PlanPtr> FftwPlan::s_forwardCache;
     inline std::unordered_map<size_t, FftwPlan::PlanPtr> FftwPlan::s_inverseCache;
+
+
+    // ── WavFileWriter constructor (out-of-line to fix default-arg/inner-class issue) ──
+    inline WavFileWriter::WavFileWriter(const QString& path, WavFileFormat fmt, bool syncOnWrite)
+        : m_format(fmt)
+        , m_path(path)
+        , m_syncOnWrite(syncOnWrite)
+    {
+        if (!sf_format_check(reinterpret_cast<SF_INFO*>(&m_format))) {
+            throw std::invalid_argument("Invalid audio format configuration");
+        }
+        SF_INFO info{};
+        info.samplerate = m_format.sampleRate;
+        info.channels   = m_format.channels;
+        info.format     = m_format.format;
+        SNDFILE* f = sf_open(path.toUtf8().constData(), SFM_WRITE, &info);
+        if (!f) {
+            throw std::runtime_error(
+                QString("Failed to open file: %1").arg(sf_strerror(nullptr)).toStdString());
+        }
+        m_file = SndFileHandle(f);
+    }
 
 } // namespace Aegis

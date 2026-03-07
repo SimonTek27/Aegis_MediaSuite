@@ -24,7 +24,14 @@
 namespace Aegis {
     class MpvBackend;  // Pillar 3 for preview
     struct AudioFormat;
-    class EditAction;
+    // Minimal EditAction definition (forward declaration is insufficient for unique_ptr in QVector)
+    class EditAction {
+    public:
+        virtual ~EditAction() = default;
+        virtual void undo() = 0;
+        virtual void redo() = 0;
+        virtual QString description() const = 0;
+    };
 }
 
 namespace Aegis {
@@ -70,6 +77,9 @@ namespace Aegis {
         Q_PROPERTY(bool modified READ modified NOTIFY modifiedChanged)
         Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStateChanged)
         Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStateChanged)
+
+        bool canUndo() const { return !m_undoStack.isEmpty(); }
+        bool canRedo() const { return !m_redoStack.isEmpty(); }
         Q_PROPERTY(QString filePath READ filePath NOTIFY filePathChanged)
         Q_PROPERTY(Aegis::AudioFormat format READ format NOTIFY formatChanged)
         Q_PROPERTY(qint64 totalFrames READ totalFrames NOTIFY bufferChanged)
@@ -193,6 +203,7 @@ namespace Aegis {
 
         // Undo/Redo
         QVector<std::unique_ptr<Aegis::EditAction>> m_undoStack;
+        QVector<std::unique_ptr<Aegis::EditAction>> m_redoStack;
         int m_undoIndex = 0;
     };
 

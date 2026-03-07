@@ -15,6 +15,8 @@
 #pragma once
 
 #include <QObject>
+#include <QTimer>
+#include <QSize>
 #include <QProcess>
 #include <QDBusInterface>
 #include <QDBusPendingCallWatcher>
@@ -152,6 +154,9 @@ public:
 
     // Capture control
     Q_INVOKABLE bool startCapture(const QString &sourceId, const QString &audioSourceId = QString());
+    Q_INVOKABLE void requestScreenCapture();
+    Q_INVOKABLE void startDeviceRecording(const QString& deviceNode);
+    Q_INVOKABLE QStringList listDevices();
     Q_INVOKABLE bool startCaptureWithOptions(const QString &sourceId,
                                              const CaptureExportOptions &options,
                                              const QString &audioSourceId = QString());
@@ -267,7 +272,7 @@ private:
     void resumeGstRecording();
 
     // Helpers
-    QString generateOutputPath(const QString &extension = "mp4");
+    QString generateOutputPath(const QString &extension = "mp4") const;
     void updateStats();
 
     // Members

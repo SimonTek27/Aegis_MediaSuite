@@ -134,7 +134,8 @@ namespace Aegis {
         void setPitch(double pitchPercent);
 
         // BPM
-        double bpm() const;
+        double bpm() const { return m_currentClip ? m_currentClip->bpm() : 0.0; }
+
         void syncToBpm(double targetBpm);
 
         // Nudge (temporary pitch bend)

@@ -196,8 +196,6 @@ namespace Aegis {
     {
         // Create EQ effects in the chain (Pillar 2)
         m_eqLow = std::make_shared<FilterEffect>(FilterEffect::LowShelf);
-        m_eqLow->setFrequency(250.0f);
-        m_eqLow->setGain(0.0f);
 
         m_eqMid = std::make_shared<FilterEffect>(FilterEffect::Peak);
         m_eqMid->setFrequency(1000.0f);
@@ -221,11 +219,7 @@ namespace Aegis {
         }
     }
 
-    DJDeck::~DJDeck() {
-        unloadTrack();
-    }
-
-    bool DJDeck::loadTrack(const QString& filePath) {
+bool DJDeck::loadTrack(const QString& filePath) {
         unloadTrack();
 
         m_currentClip = std::make_shared<DJClip>(filePath);
@@ -341,9 +335,9 @@ namespace Aegis {
         setupMixer();
     }
 
-    DJMixer::~DJMixer() {
-        stopRecording();
-    }
+    DJMixer::~DJMixer() = default;
+
+    DJDeck::~DJDeck() = default;
 
     void DJMixer::setupMixer() {
         // Pillar 1: Create AudioEngine
@@ -494,5 +488,13 @@ namespace Aegis {
 
         emit audioProcessed(masterOut, cueOut, frames);
     }
+
+    // ─── DJDeck missing property getters ─────────────────────────────────────
+
+    double DJDeck::duration() const {
+        return m_backend ? m_backend->duration() : 0.0;
+    }
+    bool DJDeck::isPlaying() const { return m_playing.load(); }
+    bool DJDeck::isCueing()  const { return m_cueing.load();  }
 
 } // namespace Aegis

@@ -152,11 +152,7 @@ namespace Aegis {
                 return false;
             }
 
-            if (!initializeOpenGLFunctions()) {
-                emit error("Failed to initialize OpenGL functions");
-                m_context->doneCurrent();
-                return false;
-            }
+            initializeOpenGLFunctions(); // returns void in Qt6 — always call unconditionally
 
             initializeGL();
             setResolution(resolution);
@@ -178,8 +174,8 @@ namespace Aegis {
         ? static_cast<QSurface*>(m_offscreenSurface)
         : m_context->surface();
 
-        if (!surf || !surf->isValid()) {
-            qWarning() << "OpenGLVideoOutput: Invalid surface for makeCurrent";
+        if (!surf) {
+            qWarning() << "OpenGLVideoOutput: No surface for makeCurrent";
             return;
         }
 
@@ -324,7 +320,16 @@ namespace Aegis {
         makeCurrent();
 
         QMutexLocker locker(&m_frameMutex);
-        m_currentFrame = frame;
+        // VideoFrame is not copy-assignable (unique_ptr member); copy fields manually
+        m_currentFrame.image             = frame.image;
+        m_currentFrame.pts               = frame.pts;
+        m_currentFrame.audioPts          = frame.audioPts;
+        m_currentFrame.sourceSize        = frame.sourceSize;
+        m_currentFrame.isHardwareDecoded = frame.isHardwareDecoded;
+        m_currentFrame.hasAlpha          = frame.hasAlpha;
+        m_currentFrame.frameNumber       = frame.frameNumber;
+        m_currentFrame.displayTime       = frame.displayTime;
+        // texture is re-uploaded below via uploadFrame()
         uploadFrame(frame);
         renderFrame();
 

@@ -2,15 +2,23 @@
 <RCC version="1.0">
   <qresource prefix="/">
     <file>qml/main.qml</file>
+    <file alias="qml/MediaSuite/Main.qml">qml/main.qml</file>
     <file>qml/ui_launcher.qml</file>
     <file>qml/ui_player.qml</file>
     <file>qml/ui_audioeditor.qml</file>
+    <file>qml/ui_videoeditor.qml</file>
+    <file>qml/ui_daw.qml</file>
     <file>qml/ui_discburner.qml</file>
     <file>qml/ui_djmixer.qml</file>
     <file>qml/ui_karaoke.qml</file>
+    <file>qml/ui_modtracker.qml</file>
+    <file>qml/ui_musicnotation_editor.qml</file>
+    <file>qml/ui_middleware.qml</file>
     <file>qml/ui_disc_labelmaker.qml</file>
     <file>qml/ui_converter.qml</file>
+    <file>qml/ui_screencapture.qml</file>
     <file>assets/fonts/JetBrainsMono-Regular.ttf</file>
+    <file>assets/fonts/JetBrainsMono-Bold.ttf</file>
     <file>assets/images/aegismps_bg.jpg</file>
     <file>assets/icons/app_icon.svg</file>
   </qresource>
