@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a1e"/>
+      <stop offset="100%" style="stop-color:#1a1a40"/>
+    </linearGradient>
+    <linearGradient id="clip1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e94560"/>
+      <stop offset="100%" style="stop-color:#c0392b"/>
+    </linearGradient>
+    <linearGradient id="clip2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#2980b9"/>
+      <stop offset="100%" style="stop-color:#1abc9c"/>
+    </linearGradient>
+    <linearGradient id="clip3" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#8e44ad"/>
+      <stop offset="100%" style="stop-color:#e74c3c"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="22" fill="url(#bg)"/>
+  <!-- Track lanes -->
+  <rect x="10" y="20" width="108" height="18" rx="3" fill="#0d0d2e"/>
+  <rect x="10" y="42" width="108" height="18" rx="3" fill="#0d0d2e"/>
+  <rect x="10" y="64" width="108" height="18" rx="3" fill="#0d0d2e"/>
+  <rect x="10" y="86" width="108" height="18" rx="3" fill="#0d0d2e"/>
+  <!-- Clips -->
+  <rect x="14" y="23" width="48" height="12" rx="2" fill="url(#clip1)" opacity="0.9"/>
+  <rect x="68" y="23" width="46" height="12" rx="2" fill="url(#clip1)" opacity="0.7"/>
+  <rect x="14" y="45" width="24" height="12" rx="2" fill="url(#clip2)" opacity="0.9"/>
+  <rect x="42" y="45" width="56" height="12" rx="2" fill="url(#clip2)" opacity="0.75"/>
+  <rect x="14" y="67" width="68" height="12" rx="2" fill="url(#clip3)" opacity="0.9"/>
+  <rect x="14" y="89" width="36" height="12" rx="2" fill="url(#clip1)" opacity="0.65"/>
+  <rect x="55" y="89" width="59" height="12" rx="2" fill="url(#clip2)" opacity="0.8"/>
+  <!-- Playhead -->
+  <line x1="50" y1="14" x2="50" y2="114" stroke="#ffcc00" stroke-width="1.5" opacity="0.8"/>
+  <polygon points="44,14 56,14 50,22" fill="#ffcc00"/>
+</svg>

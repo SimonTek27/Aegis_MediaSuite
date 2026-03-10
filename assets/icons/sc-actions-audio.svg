@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="6" y="18" width="20" height="28" rx="3" ry="3" fill="#ffffff" opacity="0.12"/>
+  <path d="M14 22 L26 22 L36 14 L36 50 L26 42 L14 42 Z" fill="#ffffff"/>
+  <!-- Sound waves -->
+  <path d="M44 26c2 2 3 4 3 6s-1 4-3 6" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M50 20c3.5 3.5 5.5 7 5.5 10s-2 6.5-5.5 10" stroke="#ffffff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.9"/>
+</svg>

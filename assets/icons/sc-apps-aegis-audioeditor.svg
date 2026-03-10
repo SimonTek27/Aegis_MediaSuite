@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3c72"/>
+      <stop offset="100%" style="stop-color:#2a5298"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="22" fill="url(#bg)"/>
+  <!-- Waveform bars -->
+  <rect x="14" y="58" width="8" height="12" rx="2" fill="white" opacity="0.4"/>
+  <rect x="26" y="46" width="8" height="36" rx="2" fill="white" opacity="0.6"/>
+  <rect x="38" y="36" width="8" height="56" rx="2" fill="white" opacity="0.8"/>
+  <rect x="50" y="28" width="8" height="72" rx="2" fill="#00d2ff"/>
+  <rect x="62" y="22" width="8" height="84" rx="2" fill="#00d2ff"/>
+  <rect x="74" y="30" width="8" height="68" rx="2" fill="white" opacity="0.85"/>
+  <rect x="86" y="40" width="8" height="48" rx="2" fill="white" opacity="0.7"/>
+  <rect x="98" y="52" width="8" height="24" rx="2" fill="white" opacity="0.5"/>
+  <rect x="110" y="57" width="8" height="14" rx="2" fill="white" opacity="0.35"/>
+  <!-- Center line -->
+  <line x1="10" y1="64" x2="118" y2="64" stroke="#00d2ff" stroke-width="1" opacity="0.4"/>
+  <!-- Scissors icon (edit symbol) -->
+  <circle cx="97" cy="95" r="12" fill="#1e3c72" stroke="#00d2ff" stroke-width="1.5"/>
+  <text x="97" y="100" text-anchor="middle" font-size="14" fill="white">✂</text>
+</svg>

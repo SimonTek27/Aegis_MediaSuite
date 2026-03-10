@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#11998e"/>
+      <stop offset="100%" style="stop-color:#38ef7d"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#065a52"/>
+      <stop offset="100%" style="stop-color:#033d37"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="22" fill="#0a2a26"/>
+  <!-- Shelf -->
+  <rect x="10" y="100" width="108" height="8" rx="3" fill="url(#bg)" opacity="0.6"/>
+  <!-- Album/track cards on shelf -->
+  <rect x="15" y="40" width="22" height="60" rx="4" fill="url(#card)" stroke="#11998e" stroke-width="1.5"/>
+  <rect x="15" y="40" width="22" height="16" rx="4" fill="#11998e" opacity="0.5"/>
+  <rect x="41" y="50" width="22" height="50" rx="4" fill="url(#card)" stroke="#38ef7d" stroke-width="1.5"/>
+  <rect x="41" y="50" width="22" height="16" rx="4" fill="#38ef7d" opacity="0.4"/>
+  <rect x="67" y="36" width="22" height="64" rx="4" fill="url(#card)" stroke="#11998e" stroke-width="1.5"/>
+  <rect x="67" y="36" width="22" height="18" rx="4" fill="#11998e" opacity="0.6"/>
+  <rect x="93" y="46" width="22" height="54" rx="4" fill="url(#card)" stroke="#38ef7d" stroke-width="1.5"/>
+  <rect x="93" y="46" width="22" height="14" rx="4" fill="#38ef7d" opacity="0.35"/>
+  <!-- Waveform lines on a card -->
+  <line x1="19" y1="66" x2="33" y2="66" stroke="#38ef7d" stroke-width="1.5" opacity="0.7"/>
+  <line x1="19" y1="71" x2="30" y2="71" stroke="#38ef7d" stroke-width="1.5" opacity="0.5"/>
+  <line x1="19" y1="76" x2="33" y2="76" stroke="#38ef7d" stroke-width="1.5" opacity="0.7"/>
+  <!-- Musical note -->
+  <text x="64" y="24" text-anchor="middle" font-size="18" fill="url(#bg)" opacity="0.9">♫</text>
+</svg>

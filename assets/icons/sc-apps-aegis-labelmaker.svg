@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" style="stop-color:#2c1654"/>
+      <stop offset="100%" style="stop-color:#160b2e"/>
+    </radialGradient>
+    <linearGradient id="label" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f7971e"/>
+      <stop offset="100%" style="stop-color:#ffd200"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="22" fill="url(#bg)"/>
+  <!-- Disc base -->
+  <circle cx="64" cy="64" r="46" fill="#1e1030" stroke="#5b2d8e" stroke-width="2"/>
+  <!-- Disc label (colored area) -->
+  <circle cx="64" cy="64" r="34" fill="url(#label)" opacity="0.85"/>
+  <!-- Center hole -->
+  <circle cx="64" cy="64" r="8" fill="#160b2e" stroke="#5b2d8e" stroke-width="2"/>
+  <circle cx="64" cy="64" r="3" fill="#2c1654"/>
+  <!-- Label text lines -->
+  <line x1="36" y1="54" x2="92" y2="54" stroke="#5b2d8e" stroke-width="2" opacity="0.6"/>
+  <line x1="40" y1="62" x2="88" y2="62" stroke="#5b2d8e" stroke-width="2" opacity="0.4"/>
+  <line x1="44" y1="70" x2="84" y2="70" stroke="#5b2d8e" stroke-width="2" opacity="0.3"/>
+  <!-- Pen/design tool icon -->
+  <circle cx="98" cy="98" r="14" fill="#2c1654" stroke="url(#label)" stroke-width="2"/>
+  <text x="98" y="103" text-anchor="middle" font-size="14" fill="url(#label)">✏</text>
+</svg>

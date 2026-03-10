@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" style="stop-color:#1a0533"/>
+      <stop offset="100%" style="stop-color:#0a0015"/>
+    </radialGradient>
+    <linearGradient id="knob" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8e44ad"/>
+      <stop offset="100%" style="stop-color:#3498db"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="22" fill="url(#bg)"/>
+  <!-- Turntable platter left -->
+  <circle cx="38" cy="64" r="28" fill="#1e0a33" stroke="#8e44ad" stroke-width="2"/>
+  <circle cx="38" cy="64" r="18" fill="#16072a" stroke="#6c3483" stroke-width="1.5" stroke-dasharray="3,2"/>
+  <circle cx="38" cy="64" r="5" fill="url(#knob)"/>
+  <!-- Turntable platter right -->
+  <circle cx="90" cy="64" r="28" fill="#1e0a33" stroke="#3498db" stroke-width="2"/>
+  <circle cx="90" cy="64" r="18" fill="#16072a" stroke="#2471a3" stroke-width="1.5" stroke-dasharray="3,2"/>
+  <circle cx="90" cy="64" r="5" fill="url(#knob)"/>
+  <!-- Crossfader -->
+  <rect x="30" y="90" width="68" height="6" rx="3" fill="#2c1850"/>
+  <rect x="54" y="87" width="20" height="12" rx="3" fill="url(#knob)"/>
+  <!-- EQ knobs -->
+  <circle cx="56" cy="26" r="7" fill="url(#knob)" opacity="0.8"/>
+  <circle cx="72" cy="26" r="7" fill="url(#knob)" opacity="0.6"/>
+  <!-- Headphone jack -->
+  <circle cx="64" cy="112" r="4" fill="url(#knob)"/>
+</svg>

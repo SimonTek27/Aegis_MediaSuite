@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#0d0d1a"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#e94560"/>
+      <stop offset="100%" style="stop-color:#f5a623"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="22" fill="url(#bg)"/>
+  <!-- Vinyl record -->
+  <circle cx="64" cy="64" r="44" fill="#1e1e30" stroke="url(#ring)" stroke-width="3"/>
+  <circle cx="64" cy="64" r="30" fill="#252540" stroke="#e94560" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <circle cx="64" cy="64" r="12" fill="#0d0d1a" stroke="url(#ring)" stroke-width="2"/>
+  <circle cx="64" cy="64" r="4" fill="url(#ring)"/>
+  <!-- Play arrow -->
+  <polygon points="56,54 56,74 80,64" fill="white" opacity="0.9"/>
+</svg>

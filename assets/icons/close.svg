@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <g stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <line x1="5" y1="5" x2="17" y2="17"/>
+    <line x1="17" y1="5" x2="5" y2="17"/>
+  </g>
+</svg>

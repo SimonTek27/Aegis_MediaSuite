@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f2027"/>
+      <stop offset="100%" style="stop-color:#203a43"/>
+    </linearGradient>
+    <linearGradient id="disc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#c0c0c0"/>
+      <stop offset="40%" style="stop-color:#e8e8ff"/>
+      <stop offset="100%" style="stop-color:#9090c0"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="22" fill="url(#bg)"/>
+  <!-- Optical disc -->
+  <circle cx="64" cy="64" r="46" fill="url(#disc)" stroke="#a0a0d0" stroke-width="1"/>
+  <!-- Rainbow bands -->
+  <circle cx="64" cy="64" r="46" fill="none" stroke="#ff6b6b" stroke-width="3" opacity="0.3" stroke-dasharray="20,160"/>
+  <circle cx="64" cy="64" r="40" fill="none" stroke="#00d2ff" stroke-width="3" opacity="0.3" stroke-dasharray="25,150"/>
+  <circle cx="64" cy="64" r="34" fill="none" stroke="#a8ff78" stroke-width="3" opacity="0.3" stroke-dasharray="30,140"/>
+  <circle cx="64" cy="64" r="28" fill="none" stroke="#f5a623" stroke-width="3" opacity="0.3" stroke-dasharray="15,130"/>
+  <!-- Center hole -->
+  <circle cx="64" cy="64" r="8" fill="#0f2027" stroke="#a0a0d0" stroke-width="1.5"/>
+  <circle cx="64" cy="64" r="3" fill="#203a43"/>
+</svg>
