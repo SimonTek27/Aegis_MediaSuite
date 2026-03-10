@@ -73,12 +73,15 @@ namespace Aegis {
 
     Duration Duration::fromString(const QString& str) {
         Duration d;
-        // Simple parsing - would need more robust implementation
-        if (str.contains("1")) d.type = DurationType::Whole;
-        else if (str.contains("2")) d.type = DurationType::Half;
-        else if (str.contains("4")) d.type = DurationType::Quarter;
-        else if (str.contains("8")) d.type = DurationType::Eighth;
+        // Fix: check longer/more specific strings first; "16" contains "1",
+        // so testing "1" first would misclassify sixteenth notes as Whole.
+        if      (str.contains("64")) d.type = DurationType::SixtyFourth;
+        else if (str.contains("32")) d.type = DurationType::ThirtySecond;
         else if (str.contains("16")) d.type = DurationType::Sixteenth;
+        else if (str.contains("8"))  d.type = DurationType::Eighth;
+        else if (str.contains("4"))  d.type = DurationType::Quarter;
+        else if (str.contains("2"))  d.type = DurationType::Half;
+        else if (str.contains("1"))  d.type = DurationType::Whole;
 
         d.dots = str.count('.');
         return d;
@@ -1280,14 +1283,15 @@ namespace Aegis {
             writer.writeBE<uint8_t>(0x2F);
             writer.writeBE<uint8_t>(0);
 
-            // Write track length
+            // Write track length in big-endian (MIDI file format requirement).
+            // Fix: writeBE<uint32_t>() already outputs big-endian bytes; applying
+            // std::reverse() on top inverts them again on LE systems, corrupting
+            // the track-length header. Write the 4 bytes manually instead.
             uint32_t trackLen = static_cast<uint32_t>(data.size() - trackStart);
-            memcpy(data.data() + trackLenPos, &trackLen, 4);
-
-            // Convert to big-endian if necessary
-            if (QSysInfo::ByteOrder == QSysInfo::LittleEndian) {
-                std::reverse(data.data() + trackLenPos, data.data() + trackLenPos + 4);
-            }
+            data[trackLenPos + 0] = static_cast<uint8_t>((trackLen >> 24) & 0xFF);
+            data[trackLenPos + 1] = static_cast<uint8_t>((trackLen >> 16) & 0xFF);
+            data[trackLenPos + 2] = static_cast<uint8_t>((trackLen >>  8) & 0xFF);
+            data[trackLenPos + 3] = static_cast<uint8_t>( trackLen        & 0xFF);
         }
 
         QFile file(path);

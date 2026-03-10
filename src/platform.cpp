@@ -451,7 +451,7 @@ void AegisAdminAdaptor::previous() {
     if (m_core) m_core->previous();
 }
 void AegisAdminAdaptor::seek(double position) {
-    if (m_core) m_core->seek(position);
+    if (m_core) m_core->seek(static_cast<qint64>(position * 1000.0));
 }
 void AegisAdminAdaptor::loadFile(const QString &path) {
     if (m_core) m_core->load(QUrl::fromLocalFile(path));

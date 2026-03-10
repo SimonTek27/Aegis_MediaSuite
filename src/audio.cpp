@@ -48,6 +48,7 @@ namespace Aegis {
     public:
         LockFreeRingBuffer() {
             m_buffer.fill(T(0));
+            std::memset(padding, 0, sizeof(padding));  // Fix: initialize padding to avoid UB with sanitizers
         }
 
         bool push(const T& value) {
@@ -175,11 +176,13 @@ namespace Aegis {
             for (int i = 0; i < simdFrames * 2; i += 8) {
                 __m256 leftRight = _mm256_loadu_ps(&data[i]);
 
-                // Deinterleave: [L0,R0,L1,R1,...] -> [L0,L1,L2,L3], [R0,R1,R2,R3]
-                __m256 lo = _mm256_unpacklo_ps(leftRight, _mm256_setzero_ps());
-                __m256 hi = _mm256_unpackhi_ps(leftRight, _mm256_setzero_ps());
-                __m256 left = _mm256_shuffle_ps(lo, hi, _MM_SHUFFLE(2,0,2,0));
-                __m256 right = _mm256_shuffle_ps(lo, hi, _MM_SHUFFLE(3,1,3,1));
+                // Deinterleave: [L0,R0,L1,R1,L2,R2,L3,R3] -> [L0,L1,L2,L3], [R0,R1,R2,R3]
+                // Fix: _mm256_unpacklo/hi + shuffle produces wrong cross-lane results for frames>4.
+                // Use _mm256_permutevar8x32_ps with explicit gather indices instead.
+                const __m256i idx_left  = _mm256_set_epi32(6,4,2,0,6,4,2,0);
+                const __m256i idx_right = _mm256_set_epi32(7,5,3,1,7,5,3,1);
+                __m256 left  = _mm256_permutevar8x32_ps(leftRight, idx_left);
+                __m256 right = _mm256_permutevar8x32_ps(leftRight, idx_right);
 
                 // center = (left + right) * 0.5
                 // side = (left - right) * 0.5

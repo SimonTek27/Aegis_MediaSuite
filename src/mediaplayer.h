@@ -10,6 +10,7 @@
 #include <memory>
 #include "audio.h"
 #include "audio_output.h"  // NEW: Audio output abstraction
+#include "core.h"
 
 // Forward declarations
 namespace Aegis {
@@ -22,31 +23,10 @@ namespace Aegis {
 
     class MpvBackend;  // forward declaration
 
-    enum class PlaybackState {
-        Stopped,
-        Playing,
-        Paused,
-        Buffering,
-        Error
-    };
-
     enum class BackendType {
         None,
         Mpv,      // Standard audio/video via MPV + AudioOutput
         Tracker   // MOD/XM/IT/S3M via libopenmpt + AudioOutput
-    };
-
-    struct TrackMetadata {
-        QString title;
-        QString artist;
-        QString album;
-        QString comment;
-        int year = 0;
-        int duration = 0;     // milliseconds
-        int channels = 2;
-        int patterns = 0;
-        bool hasVideo = false;
-        bool isTracker = false;
     };
 
     /**
@@ -199,5 +179,4 @@ namespace Aegis {
 
 } // namespace Aegis
 
-Q_DECLARE_METATYPE(Aegis::PlaybackState)
 Q_DECLARE_METATYPE(Aegis::BackendType)

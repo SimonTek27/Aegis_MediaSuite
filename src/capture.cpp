@@ -28,11 +28,7 @@
 
 // GStreamer includes
 #ifdef HAVE_GSTREAMER
-#ifdef HAVE_GSTREAMER
 #include <gst/gst.h>
-#endif
-#endif
-#ifdef HAVE_GSTREAMER
 #include <gst/pbutils/pbutils.h>
 #endif
 

@@ -42,7 +42,7 @@ namespace Aegis {
      * Uses Solid framework for hardware enumeration (KF6 standard).
      * Falls back to UDisks2 D-Bus if Solid is unavailable.
      */
-    QStringList CDBurner::enumerateDrives() {
+    QStringList CDBurner::enumerateDrivesStatic() {
         QStringList devices;
 
         // Method 1: Use Solid framework (KDE Frameworks 6)
@@ -156,7 +156,7 @@ namespace Aegis {
      *
      * Determines which media types the drive can read/write and maximum speeds.
      */
-    BurnerCapabilities CDBurner::getCapabilities(const QString &device) {
+    BurnerCapabilities CDBurner::getCapabilitiesStatic(const QString &device) {
         BurnerCapabilities caps = {};
 
         if (device.isEmpty()) {
@@ -224,6 +224,36 @@ namespace Aegis {
         << "CD max speed:" << caps.maxSpeedCD << "KB/s";
 
         return caps;
+    }
+
+    // ── QML-invokable wrappers ────────────────────────────────────────────────
+    QVariantMap CDBurner::getCapabilities(const QString &device) {
+        const QString dev = device.isEmpty() ? m_currentDevice : device;
+        BurnerCapabilities caps = getCapabilitiesStatic(dev);
+        QVariantMap map;
+        map["canRead"]              = caps.canRead;
+        map["canBurnCD"]            = caps.canWriteCDR || caps.canWriteCDRW;
+        map["canBurnDVD"]           = caps.canWriteDVDR || caps.canWriteDVDPlusR || caps.canWriteDVDRAM;
+        map["canBurnBD"]            = caps.canWriteBD || caps.canWriteBDR || caps.canWriteBDRE;
+        map["canWriteCDR"]          = caps.canWriteCDR;
+        map["canWriteCDRW"]         = caps.canWriteCDRW;
+        map["canWriteDVDR"]         = caps.canWriteDVDR;
+        map["canWriteDVDPlusR"]     = caps.canWriteDVDPlusR;
+        map["canWriteBDR"]          = caps.canWriteBDR;
+        map["maxWriteSpeedCD"]      = caps.maxSpeedCD;
+        map["maxWriteSpeedDVD"]     = caps.maxSpeedDVD;
+        map["maxWriteSpeedBD"]      = caps.maxSpeedBD;
+        map["supportsBurnProof"]    = caps.supportsBurnProof;
+        return map;
+    }
+
+    void CDBurner::startBurn(const QVariantMap &jobMap) {
+        BurnJob job;
+        job.device      = jobMap.value("device", m_currentDevice).toString();
+        job.volumeLabel = jobMap.value("volumeLabel", "Aegis Disc").toString();
+        job.speed       = BurnSpeed::Auto;
+        // Delegate to internal implementation
+        startBurn(job);
     }
 
     /**
@@ -703,7 +733,12 @@ namespace Aegis {
 
     bool CDBurner::mediaPresent(const QString& device) {
         QVariantMap info = mediaInfo(device);
-        return info.contains("mediaType");
+        bool present = info.contains("mediaType");
+        if (present != m_discPresent) {
+            m_discPresent = present;
+            emit mediaStatusChanged(m_discPresent);
+        }
+        return present;
     }
 
     void CDBurner::startBurn(const BurnJob &job) {

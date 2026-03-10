@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QDebug>
 #include <QtMath>
+#include <QMediaDevices>
+#include <QAudioDevice>
 #include <algorithm>
 #include <cstring>
 #include <sndfile.h>
@@ -232,7 +234,11 @@ namespace Aegis {
     void AudioEditor::close()                             { m_buffer = EnhancedAudioBuffer(); emit bufferChanged(); }
 
     void AudioEditor::cut()    { copy(); deleteSelection(); }
-    void AudioEditor::copy()   { /* clipboard not yet implemented */ Q_UNUSED(m_selection) }
+    void AudioEditor::copy()   {
+        /* clipboard not yet implemented */ Q_UNUSED(m_selection)
+        m_hasClipboard = true;
+        emit clipboardChanged();
+    }
     void AudioEditor::paste(qint64 position) {
         Q_UNUSED(position) markModified();
     }
@@ -254,6 +260,34 @@ namespace Aegis {
     void AudioEditor::gotoEnd()            { m_position = duration(); emit positionChanged(); }
     void AudioEditor::gotoSelectionStart() { emit positionChanged(); }
     void AudioEditor::gotoSelectionEnd()   { emit positionChanged(); }
+
+    // ── QML alias implementations ──────────────────────────────────────────
+    void AudioEditor::togglePlayback() {
+        if (isPlaying()) pause(); else play();
+    }
+
+    void AudioEditor::toggleRecording() {
+        m_recording = !m_recording;
+        emit recordingStateChanged();
+    }
+
+    double AudioEditor::selectionStartSecs() const {
+        if (m_format.sampleRate <= 0) return 0.0;
+        return static_cast<double>(m_selection.start) / m_format.sampleRate;
+    }
+
+    double AudioEditor::selectionEndSecs() const {
+        if (m_format.sampleRate <= 0) return 0.0;
+        return static_cast<double>(m_selection.end) / m_format.sampleRate;
+    }
+
+    QStringList AudioEditor::availableDevices() {
+        // Return PipeWire/PulseAudio sinks via QAudioDevice enumeration
+        QStringList devices;
+        for (const QAudioDevice& dev : QMediaDevices::audioOutputs())
+            devices << dev.description();
+        return devices;
+    }
 
     bool AudioEditor::amplify(float gain) {
         if (m_buffer.isEmpty()) return false;

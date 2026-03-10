@@ -546,62 +546,169 @@ bool VideoEncoder::initialize(const QString &outputPath, const EncodeSettings &s
         return false;
     }
     
-    // Allocate frames
+    // Allocate video frame
     m_videoFrame.reset(av_frame_alloc());
     m_videoFrame->format = m_videoCodecCtx->pix_fmt;
     m_videoFrame->width = m_videoCodecCtx->width;
     m_videoFrame->height = m_videoCodecCtx->height;
     av_frame_get_buffer(m_videoFrame.get(), 0);
-    
+
     // Initialize scaler for input conversion
     m_swsCtx.reset(sws_getContext(
         settings.width, settings.height, AV_PIX_FMT_RGB24,
         settings.width, settings.height, AV_PIX_FMT_YUV420P,
         SWS_BILINEAR, nullptr, nullptr, nullptr
     ));
-    
+
+    // ── Audio stream setup ────────────────────────────────────────────────────
+    const AVCodec *audioCodec = avcodec_find_encoder_by_name(
+                                    settings.audioCodec.toUtf8().constData());
+    if (!audioCodec)
+        audioCodec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+
+    if (audioCodec) {
+        m_audioStream = avformat_new_stream(m_formatCtx.get(), nullptr);
+        if (!m_audioStream) {
+            emit error("Failed to create audio stream");
+            return false;
+        }
+
+        m_audioCodecCtx.reset(avcodec_alloc_context3(audioCodec));
+        if (!m_audioCodecCtx) {
+            emit error("Failed to allocate audio codec context");
+            return false;
+        }
+
+        m_audioCodecCtx->sample_rate    = settings.audioSampleRate;
+        m_audioCodecCtx->bit_rate       = settings.audioBitrate;
+        // avcodec_get_supported_config replaces deprecated AVCodec::sample_fmts (FFmpeg >= 6.1)
+        {
+            const AVSampleFormat* fmts = nullptr;
+            int numFmts = 0;
+            if (avcodec_get_supported_config(nullptr, audioCodec, AV_CODEC_CONFIG_SAMPLE_FORMAT,
+                                             0, (const void**)&fmts, &numFmts) == 0
+                && numFmts > 0) {
+                m_audioCodecCtx->sample_fmt = fmts[0];
+            } else {
+                m_audioCodecCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+            }
+        }
+        av_channel_layout_default(&m_audioCodecCtx->ch_layout,
+                                   settings.audioChannels);
+
+        if (m_formatCtx->oformat->flags & AVFMT_GLOBALHEADER)
+            m_audioCodecCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+
+        ret = avcodec_open2(m_audioCodecCtx.get(), audioCodec, nullptr);
+        if (ret < 0) {
+            emit error("Failed to open audio codec: " + FFmpegUtils::errorString(ret));
+            return false;
+        }
+
+        ret = avcodec_parameters_from_context(m_audioStream->codecpar,
+                                               m_audioCodecCtx.get());
+        if (ret < 0) {
+            emit error("Failed to copy audio codec parameters");
+            return false;
+        }
+        m_audioStream->time_base = AVRational{1, m_audioCodecCtx->sample_rate};
+
+        // Resampler: planar float (engine output) → codec native format
+        SwrContext *swrRaw = nullptr;
+        ret = swr_alloc_set_opts2(&swrRaw,
+            &m_audioCodecCtx->ch_layout, m_audioCodecCtx->sample_fmt,
+                                          m_audioCodecCtx->sample_rate,
+            &m_audioCodecCtx->ch_layout, AV_SAMPLE_FMT_FLTP,
+                                          m_audioCodecCtx->sample_rate,
+            0, nullptr);
+        if (ret < 0 || !swrRaw) {
+            emit error("Failed to create resampler");
+            return false;
+        }
+        m_swrCtx.reset(swrRaw);
+        if (swr_init(m_swrCtx.get()) < 0) {
+            emit error("Failed to initialise resampler");
+            return false;
+        }
+
+        // Audio frame sized to codec frame_size (or a sensible default)
+        int frameSize = m_audioCodecCtx->frame_size > 0
+                            ? m_audioCodecCtx->frame_size : 1024;
+
+        m_audioFrame.reset(av_frame_alloc());
+        m_audioFrame->format         = m_audioCodecCtx->sample_fmt;
+        m_audioFrame->sample_rate    = m_audioCodecCtx->sample_rate;
+        m_audioFrame->nb_samples     = frameSize;
+        av_channel_layout_copy(&m_audioFrame->ch_layout,
+                                &m_audioCodecCtx->ch_layout);
+        av_frame_get_buffer(m_audioFrame.get(), 0);
+    }
+    // ── End audio setup ───────────────────────────────────────────────────────
+
     m_encoding = true;
     m_framesEncoded = 0;
     m_nextPts = 0;
-    
+    m_audioNextPts = 0;
+
     return true;
 }
 
 void VideoEncoder::finalize() {
     QMutexLocker lock(&m_mutex);
-    
+
     if (!m_encoding) return;
-    
-    // Flush encoder
+
+    // Flush video encoder
     if (m_videoCodecCtx) {
         avcodec_send_frame(m_videoCodecCtx.get(), nullptr);
-        
+
         AVPacketPtr packet(av_packet_alloc());
         while (avcodec_receive_packet(m_videoCodecCtx.get(), packet.get()) >= 0) {
-            av_packet_rescale_ts(packet.get(), 
-                m_videoCodecCtx->time_base, 
+            av_packet_rescale_ts(packet.get(),
+                m_videoCodecCtx->time_base,
                 m_videoStream->time_base);
+            packet->stream_index = m_videoStream->index;
             av_interleaved_write_frame(m_formatCtx.get(), packet.get());
             av_packet_unref(packet.get());
         }
     }
-    
+
+    // Flush audio encoder
+    if (m_audioCodecCtx && m_audioStream) {
+        avcodec_send_frame(m_audioCodecCtx.get(), nullptr);
+
+        AVPacketPtr packet(av_packet_alloc());
+        while (avcodec_receive_packet(m_audioCodecCtx.get(), packet.get()) >= 0) {
+            av_packet_rescale_ts(packet.get(),
+                m_audioCodecCtx->time_base,
+                m_audioStream->time_base);
+            packet->stream_index = m_audioStream->index;
+            av_interleaved_write_frame(m_formatCtx.get(), packet.get());
+            av_packet_unref(packet.get());
+        }
+    }
+
     // Write trailer
     if (m_formatCtx) {
         av_write_trailer(m_formatCtx.get());
-        
+
         if (!(m_formatCtx->oformat->flags & AVFMT_NOFILE)) {
             avio_closep(&m_formatCtx->pb);
         }
     }
-    
+
     // Cleanup
     m_swsCtx.reset();
+    m_swrCtx.reset();
     m_videoFrame.reset();
+    m_audioFrame.reset();
+    m_convertedFrame.reset();
     m_videoCodecCtx.reset();
+    m_audioCodecCtx.reset();
     m_videoStream = nullptr;
+    m_audioStream = nullptr;
     m_formatCtx.reset();
-    
+
     m_encoding = false;
     emit finished();
 }
@@ -669,9 +776,97 @@ bool VideoEncoder::writeVideoFrame(AVFrame *frame) {
 }
 
 bool VideoEncoder::encodeAudioSamples(const float *samples, int sampleCount) {
-    // TODO: Implement audio encoding
-    Q_UNUSED(samples)
-    Q_UNUSED(sampleCount)
+    QMutexLocker lock(&m_mutex);
+
+    if (!m_encoding || !m_audioCodecCtx || !m_audioStream || !m_swrCtx)
+        return true;  // no audio stream configured - silently OK
+
+    if (!samples || sampleCount <= 0)
+        return false;
+
+    const int channels  = m_audioCodecCtx->ch_layout.nb_channels;
+    const int frameSize = m_audioFrame->nb_samples;
+
+    // Build a temporary planar-float source frame for swr_convert
+    AVFramePtr srcFrame(av_frame_alloc());
+    srcFrame->format      = AV_SAMPLE_FMT_FLTP;
+    srcFrame->sample_rate = m_audioCodecCtx->sample_rate;
+    srcFrame->nb_samples  = sampleCount / channels;
+    av_channel_layout_copy(&srcFrame->ch_layout, &m_audioCodecCtx->ch_layout);
+    av_frame_get_buffer(srcFrame.get(), 0);
+
+    // De-interleave: samples[L0,R0,L1,R1,...] -> plane[0][L...], plane[1][R...]
+    for (int ch = 0; ch < channels; ++ch) {
+        float *dst = reinterpret_cast<float*>(srcFrame->data[ch]);
+        for (int i = 0; i < srcFrame->nb_samples; ++i)
+            dst[i] = samples[i * channels + ch];
+    }
+
+    // Feed into the resampler FIFO
+    int ret = swr_convert(m_swrCtx.get(), nullptr, 0,
+                          const_cast<const uint8_t**>(srcFrame->data),
+                          srcFrame->nb_samples);
+    if (ret < 0) {
+        emit error("swr_convert failed: " + FFmpegUtils::errorString(ret));
+        return false;
+    }
+
+    // Drain complete frames from the resampler and submit to the encoder
+    while (swr_get_delay(m_swrCtx.get(), m_audioCodecCtx->sample_rate) >= frameSize) {
+        av_frame_make_writable(m_audioFrame.get());
+
+        ret = swr_convert(m_swrCtx.get(),
+                          m_audioFrame->data, frameSize,
+                          nullptr, 0);
+        if (ret < 0) {
+            emit error("swr_convert (drain) failed: " + FFmpegUtils::errorString(ret));
+            return false;
+        }
+
+        m_audioFrame->pts = av_rescale_q(m_audioNextPts,
+                                          AVRational{1, m_audioCodecCtx->sample_rate},
+                                          m_audioCodecCtx->time_base);
+        m_audioNextPts += ret;
+
+        if (!writeAudioFrame(m_audioFrame.get()))
+            return false;
+    }
+
+    return true;
+}
+
+bool VideoEncoder::writeAudioFrame(AVFrame *frame) {
+    // NOTE: m_mutex is already held by encodeAudioSamples / finalize.
+    int ret = avcodec_send_frame(m_audioCodecCtx.get(), frame);
+    if (ret < 0) {
+        emit error("Error sending audio frame: " + FFmpegUtils::errorString(ret));
+        return false;
+    }
+
+    AVPacketPtr packet(av_packet_alloc());
+    while (ret >= 0) {
+        ret = avcodec_receive_packet(m_audioCodecCtx.get(), packet.get());
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            break;
+        if (ret < 0) {
+            emit error("Error encoding audio: " + FFmpegUtils::errorString(ret));
+            return false;
+        }
+
+        av_packet_rescale_ts(packet.get(),
+            m_audioCodecCtx->time_base,
+            m_audioStream->time_base);
+        packet->stream_index = m_audioStream->index;
+
+        ret = av_interleaved_write_frame(m_formatCtx.get(), packet.get());
+        av_packet_unref(packet.get());
+
+        if (ret < 0) {
+            emit error("Error writing audio packet: " + FFmpegUtils::errorString(ret));
+            return false;
+        }
+    }
+
     return true;
 }
 

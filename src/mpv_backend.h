@@ -1,55 +1,72 @@
-// mpv_backend.h - Concrete implementation
+// mpv_backend.h - Concrete implementation of IAudioBackend using libmpv
 #pragma once
 
-#include "core.h"          // for AudioBackend, PlaybackState, TrackMetadata
+#include "core.h"          // for IAudioBackend, PlaybackState, TrackMetadata
 #include "raii_wrappers.h"
 #include <QTimer>
+#include <QObject>
 
 namespace Aegis {
 
-    class MpvBackend : public IAudioBackend {
+    class MpvBackend : public QObject, public IAudioBackend {
         Q_OBJECT
     public:
         explicit MpvBackend(QObject* parent = nullptr);
         ~MpvBackend() override;
 
-        Result<void> load(const QString& path) override;
-        Result<void> play() override;
-        Result<void> pause() override;
-        Result<void> stop() override;
-        Result<void> seek(double position) override;
-        Result<void> setVolume(double volume) override;
+        // ── IAudioBackend interface ──────────────────────────────────────────
+        // Signatures must exactly match IAudioBackend (core.h).
+        // play/pause/stop/setVolume return void; errors are logged internally.
+        // seek takes qint64 milliseconds, matching IAudioBackend::seek(qint64).
 
-        PlaybackState state() const override { return m_state; }
-        double position() const override { return m_position; }
-        double duration() const override { return m_duration; }
+        bool    open(const QUrl& url) override;
+        void    close() override;
+
+        void    play()                     override;
+        void    pause()                    override;
+        void    stop()                     override;
+
+        void    seek(qint64 positionMs)    override;
+        qint64  position() const           override;
+        qint64  duration() const           override;
+
+        void    setVolume(double volume)   override;
+        double  volume()  const            override;
+
+        PlaybackState state()    const override { return m_state; }
         TrackMetadata metadata() const override { return m_metadata; }
-        bool hasVideo() const override { return m_hasVideo; }
 
-        void setAudioCallback(std::function<void(const QByteArray&, int)> cb) override {
+        bool    isSeekable() const         override;
+
+        // ── MPV-specific extras ─────────────────────────────────────────────
+        bool hasVideo() const { return m_hasVideo; }
+        void setAudioCallback(std::function<void(const QByteArray&, int)> cb) {
             m_audioCallback = std::move(cb);
         }
 
-    // BackendType concept interface
-    static QString name() { return QStringLiteral("mpv"); }
-    static bool isAvailable();
+        // Convenience wrapper for C++ callers that have a local file path
+        bool load(const QString& path) { return open(QUrl::fromLocalFile(path)); }
 
-    struct Capabilities {
-        bool supportsVideo{true};
-        bool supportsAudio{true};
-        bool supportsStreaming{true};
-        bool supportsHardwareDecoding{true};
-        int maxChannels{8};
-        QStringList supportedCodecs;
-    };
-    static Capabilities capabilities();
+        static QString name() { return QStringLiteral("mpv"); }
+        static bool isAvailable();
 
-signals:
+        struct Capabilities {
+            bool supportsVideo{true};
+            bool supportsAudio{true};
+            bool supportsStreaming{true};
+            bool supportsHardwareDecoding{true};
+            int maxChannels{8};
+            QStringList supportedCodecs;
+        };
+        static Capabilities capabilities();
+
+    signals:
         void positionChanged(double position);
         void durationChanged(double duration);
         void finished();
         void stateChanged(Aegis::PlaybackState state);
         void metadataChanged(const Aegis::TrackMetadata& metadata);
+        void error(const QString& message);
 
     private slots:
         void handleEvent();
@@ -71,16 +88,18 @@ signals:
         static void mpvWakeup(void* ctx);
         void updateMetadata();
 
+        // Helper: run a Result<void> and emit error signal on failure
+        void runOrLog(const char* context, Result<void> result);
+
         MpvHandle m_mpv;
         QTimer m_posTimer;
         std::atomic<PlaybackState> m_state{PlaybackState::Stopped};
-        std::atomic<double> m_position{0.0};
-        std::atomic<double> m_duration{0.0};
-        std::atomic<bool> m_hasVideo{false};
+        std::atomic<double> m_position{0.0};   // seconds (mpv native)
+        std::atomic<double> m_duration{0.0};   // seconds (mpv native)
+        std::atomic<bool>   m_hasVideo{false};
         TrackMetadata m_metadata;
         std::function<void(const QByteArray&, int)> m_audioCallback;
+        double m_volume{1.0};
     };
-
-
 
 } // namespace Aegis

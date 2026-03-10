@@ -243,6 +243,7 @@ private:
     bool m_encoding = false;
     int64_t m_framesEncoded = 0;
     int64_t m_nextPts = 0;
+    int64_t m_audioNextPts = 0;
     
     AVFramePtr m_videoFrame;
     AVFramePtr m_audioFrame;

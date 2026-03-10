@@ -504,7 +504,7 @@ namespace Aegis {
 
         switch (backend) {
             case BackendType::Mpv:
-                d->mpvBackend->seek(seconds);
+                d->mpvBackend->seek(static_cast<qint64>(seconds * 1000.0));
                 break;
 
             case BackendType::Tracker:
@@ -787,11 +787,7 @@ namespace Aegis {
         return d->audioOutput.get();
     }
 
-} // namespace Aegis
-
-namespace Aegis {
-
-    // ── enqueue ──────────────────────────────────────────────────────────────────
+    // ── enqueue  // Fix: removed spurious namespace close/reopen ──────────────────────────────────────────────────────────────────
     void MediaPlayer::enqueue(const QUrl& url)
     {
         if (!d->playlist) {

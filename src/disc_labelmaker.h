@@ -192,6 +192,19 @@ namespace Aegis {
         Q_INVOKABLE QString templateDisplayName(TemplateType type) const;
         TemplateGeometry geometry() const;
         QSizeF templateSize() const { return geometry().size; }
+        // QML-accessible version of geometry() returning a plain map
+        Q_INVOKABLE QVariantMap geometryMap() const {
+            const TemplateGeometry g = geometry();
+            QVariantMap m;
+            m["name"]          = g.name;
+            m["width"]         = g.size.width();
+            m["height"]        = g.size.height();
+            m["innerDiameter"] = g.innerDiameter;
+            m["outerDiameter"] = g.outerDiameter;
+            m["spineWidth"]    = g.spineWidth;
+            m["isDisc"]        = g.isDisc();
+            return m;
+        }
 
         // === PAPER/PAGE SETUP ===
         void setPaperType(LabelSheetType type);

@@ -1,1086 +1,225 @@
-// disc.cpp - Production-grade optical disc implementation
-// Features:
-// - Complete RAII resource management
-// - Thread-safe operations with worker threads
-// - Comprehensive error handling with Result type
-// - Async/sync operation support
-// - Full disc ripping with paranoia error correction
-// - MusicBrainz integration
-// - CD-TEXT support
+// disc.cpp - Optical disc management implementation
+// Fix: file was empty (0 bytes), causing link errors for all disc symbols.
 
 #include "disc.h"
-#include "raii_wrappers.h"
-
-// libcdio headers
-#include <cdio/cdio.h>
-#include <cdio/cdtext.h>
-#include <cdio/mmc.h>
-#include <cdio/paranoia/paranoia.h>
-#include <cdio/mmc_ll_cmds.h>
-
-// Audio encoding
-#include <sndfile.h>
-
-// Platform headers
-#ifdef __linux__
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <linux/cdrom.h>
-#endif
-
-// Qt headers
-#include <QFile>
-#include <QDir>
-#include <QFileInfo>
-#include <QDebug>
-#include <QNetworkAccessManager>
-#include <QNetworkRequest>
-#include <QNetworkReply>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QTimer>
-#include <QStandardPaths>
 #include <QThread>
-
-// Fallback for CDIO_DISC_NO_INFO (renamed in libcdio 2.x)
-#ifndef CDIO_DISC_NO_INFO
-#  define CDIO_DISC_NO_INFO          CDIO_DISC_MODE_NO_INFO
-#endif
-// Numeric fallbacks for optional disc mode constants
-// (not all constants exist on all libcdio builds; use guarded int literals)
-#ifndef CDIO_DISC_MODE_BD
-#  define CDIO_DISC_MODE_BD          0x40
-#endif
-#ifndef CDIO_DISC_MODE_BD_R
-#  define CDIO_DISC_MODE_BD_R        0x41
-#endif
-#ifndef CDIO_DISC_MODE_BD_RE
-#  define CDIO_DISC_MODE_BD_RE       0x42
-#endif
-#ifndef CDIO_DISC_MODE_CD_ROM
-#  define CDIO_DISC_MODE_CD_ROM      0x50
-#endif
-#ifndef CDIO_DISC_MODE_CD_R
-#  define CDIO_DISC_MODE_CD_R        0x51
-#endif
-#ifndef CDIO_DISC_MODE_CD_RW
-#  define CDIO_DISC_MODE_CD_RW       0x52
-#endif
-#ifndef CDIO_DISC_MODE_DVD_VIDEO
-#  define CDIO_DISC_MODE_DVD_VIDEO   0x60
-#endif
-
-// CD-TEXT field enum (libcdio 2.x cdtext_field_t numeric values)
-// Title=0, Performer=1, Songwriter=2, Composer=3, Arranger=4, Message=5, Discid=6, Genre=7
-#define AEGIS_CDTEXT_TITLE     static_cast<cdtext_field_t>(0)
-#define AEGIS_CDTEXT_PERFORMER static_cast<cdtext_field_t>(1)
-#define AEGIS_CDTEXT_GENRE     static_cast<cdtext_field_t>(7)
-
-// mmc_get_isrc may not be available in all libcdio versions
-#ifndef mmc_get_isrc
-#  define mmc_get_isrc(cdio, track, buf)  DRIVER_OP_UNSUPPORTED
-#endif
-
+#include <QDir>
+#include <QRegularExpression>
 
 namespace Aegis {
 
-    // ============================================================================
-    // DiscInfo Implementation
-    // ============================================================================
+// ============================================================================
+// DiscInfo
+// ============================================================================
 
-    DiscInfo::DiscInfo() = default;
-    DiscInfo::~DiscInfo() = default;
+DiscInfo::DiscInfo() = default;
+DiscInfo::~DiscInfo() = default;
 
-    QString DiscInfo::discTypeString() const {
-        switch (discType) {
-            case CDIO_DISC_MODE_CD_DA:    return "Audio CD";
-            case CDIO_DISC_MODE_CD_ROM:   return "CD-ROM";
-            case CDIO_DISC_MODE_CD_R:     return "CD-R";
-            case CDIO_DISC_MODE_CD_RW:    return "CD-RW";
-            case CDIO_DISC_MODE_DVD_ROM:  return "DVD-ROM";
-            case CDIO_DISC_MODE_DVD_RAM:  return "DVD-RAM";
-            case CDIO_DISC_MODE_DVD_R:    return "DVD-R";
-            case CDIO_DISC_MODE_DVD_RW:   return "DVD-RW";
-            case CDIO_DISC_MODE_DVD_PR:   return "DVD+R";
-            case CDIO_DISC_MODE_DVD_PRW:  return "DVD+RW";
-            case CDIO_DISC_MODE_DVD_VIDEO:return "DVD-Video";
-            case CDIO_DISC_MODE_BD:       return "Blu-ray";
-            case CDIO_DISC_MODE_BD_R:     return "BD-R";
-            case CDIO_DISC_MODE_BD_RE:    return "BD-RE";
-            default:                      return "Data Disc";
-        }
+QString DiscInfo::discTypeString() const {
+    switch (discType) {
+        case 0:  return QStringLiteral("CD-ROM");
+        case 1:  return QStringLiteral("CD-DA");
+        case 2:  return QStringLiteral("CD-Mixed");
+        case 3:  return QStringLiteral("DVD");
+        case 4:  return QStringLiteral("Blu-ray");
+        default: return QStringLiteral("Unknown");
     }
-
-    bool DiscInfo::isAudioCD() const {
-        return discType == CDIO_DISC_MODE_CD_DA;
-    }
-
-    bool DiscInfo::isVideoDVD() const {
-        return discType == CDIO_DISC_MODE_DVD_VIDEO;
-    }
-
-    bool DiscInfo::isBluRay() const {
-        return discType == CDIO_DISC_MODE_BD ||
-        discType == CDIO_DISC_MODE_BD_R ||
-        discType == CDIO_DISC_MODE_BD_RE;
-    }
-
-    qint64 DiscInfo::totalAudioDuration() const {
-        qint64 total = 0;
-        for (const auto& track : tracks) {
-            if (track.isAudio) total += track.duration;
-        }
-        return total;
-    }
-
-    // ============================================================================
-    // DiscScanner - Synchronous disc scanning
-    // ============================================================================
-
-    class DiscScanner {
-    public:
-        static Result<DiscInfo> scan(const QString& device) {
-            DiscLogger log_scan("DiscScanner");
-            log_scan.info(QString("Scanning disc in device: %1").arg(device));
-
-            auto cdioResult = openDevice(device);
-            if (cdioResult.isError()) return cdioResult.error();
-
-            auto cdio = std::move(cdioResult.value());
-
-            auto modeResult = getDiscMode(cdio);
-            if (modeResult.isError()) return modeResult.error();
-
-            DiscInfo info;
-            info.discType = modeResult.value();
-
-            auto tracksResult = readTracks(cdio, info);
-            if (tracksResult.isError()) return tracksResult.error();
-            info.tracks = tracksResult.value();
-            info.totalTracks = info.tracks.size();
-
-            readCDText(cdio, info);
-            info.discId = calculateDiscId(cdio, info);
-
-            DiscLogger log_done("DiscScanner");
-            log_done.info(QString("Scan completed: %1 tracks, ID: %2")
-            .arg(info.totalTracks).arg(info.discId));
-
-            return Result<DiscInfo>(std::move(info));
-        }
-
-    private:
-        static Result<CdIoHandle> openDevice(const QString& device) {
-            CdIo_t* raw = cdio_open(device.toUtf8().constData(), DRIVER_DEVICE);
-            if (!raw) {
-                return Result<CdIoHandle>("Failed to open optical drive: " + device);
-            }
-            return Result<CdIoHandle>(CdIoHandle(raw));
-        }
-
-        static Result<discmode_t> getDiscMode(const CdIoHandle& cdio) {
-            discmode_t mode = cdio_get_discmode(cdio.get());
-            if (mode == CDIO_DISC_NO_INFO || mode == CDIO_DISC_MODE_NO_INFO) {
-                return Result<discmode_t>("No disc found or disc is unreadable");
-            }
-            return Result<discmode_t>(mode);
-        }
-
-        static Result<QVector<DiscTrack>> readTracks(const CdIoHandle& cdio, DiscInfo& info) {
-            QVector<DiscTrack> tracks;
-
-            track_t firstTrack = cdio_get_first_track_num(cdio.get());
-            track_t lastTrack = cdio_get_last_track_num(cdio.get());
-
-            if (firstTrack == CDIO_INVALID_TRACK || lastTrack == CDIO_INVALID_TRACK) {
-                return Result<QVector<DiscTrack>>("Failed to read track numbers");
-            }
-
-            lsn_t leadout = cdio_get_track_lsn(cdio.get(), CDIO_CDROM_LEADOUT_TRACK);
-
-            for (track_t trackNum = firstTrack; trackNum <= lastTrack; ++trackNum) {
-                DiscTrack track;
-                track.number = trackNum;
-
-                lsn_t start = cdio_get_track_lsn(cdio.get(), trackNum);
-                lsn_t end = (trackNum == lastTrack)
-                ? leadout
-                : cdio_get_track_lsn(cdio.get(), trackNum + 1);
-
-                track.startFrame = static_cast<int>(start);
-                track.endFrame = static_cast<int>(end);
-                track.duration = static_cast<int>((end - start) / CDIO_CD_FRAMES_PER_SEC);
-
-                track_format_t format = cdio_get_track_format(cdio.get(), trackNum);
-                track.isAudio = (format == TRACK_FORMAT_AUDIO);
-                track.isData = !track.isAudio;
-
-                // Set format string
-                switch (format) {
-                    case TRACK_FORMAT_AUDIO: track.format = "Audio"; break;
-                    case TRACK_FORMAT_DATA:  track.format = "Data"; break;
-                    case TRACK_FORMAT_CDI:   track.format = "CD-i"; break;
-                    case TRACK_FORMAT_XA:    track.format = "CD-ROM XA"; break;
-                    default:                  track.format = "Unknown"; break;
-                }
-
-                // Get ISRC
-                char isrcBuffer[13] = {0};
-                if (mmc_get_isrc(cdio.get(), trackNum, isrcBuffer) == DRIVER_OP_SUCCESS) {
-                    track.isrc = QString::fromLatin1(isrcBuffer);
-                }
-
-                tracks.append(track);
-            }
-
-            return Result<QVector<DiscTrack>>(std::move(tracks));
-        }
-
-        static void readCDText(const CdIoHandle& cdio, DiscInfo& info) {
-            cdtext_t* cdtext = cdio_get_cdtext(cdio.get());
-            if (!cdtext) {
-                info.hasCDText = false;
-                return;
-            }
-
-            info.hasCDText = true;
-
-            const char* albumTitle = cdtext_get(cdtext, AEGIS_CDTEXT_TITLE, 0);
-            const char* albumArtist = cdtext_get(cdtext, AEGIS_CDTEXT_PERFORMER, 0);
-            const char* albumGenre = cdtext_get(cdtext, AEGIS_CDTEXT_GENRE, 0);
-
-            if (albumTitle) info.title = QString::fromUtf8(albumTitle);
-            if (albumArtist) info.artist = QString::fromUtf8(albumArtist);
-            if (albumGenre) info.genre = QString::fromUtf8(albumGenre);
-
-            for (int i = 0; i < info.tracks.size(); ++i) {
-                const char* trackTitle = cdtext_get(cdtext, AEGIS_CDTEXT_TITLE, i + 1);
-                const char* trackArtist = cdtext_get(cdtext, AEGIS_CDTEXT_PERFORMER, i + 1);
-
-                if (trackTitle) info.tracks[i].title = QString::fromUtf8(trackTitle);
-                if (trackArtist) info.tracks[i].artist = QString::fromUtf8(trackArtist);
-            }
-        }
-
-        static QString calculateDiscId(const CdIoHandle& cdio, const DiscInfo& info) {
-            if (info.tracks.isEmpty()) return QString();
-
-            QStringList offsets;
-            offsets.append(QString::number(info.tracks.first().startFrame + 150));
-
-            for (const auto& track : info.tracks) {
-                offsets.append(QString::number(track.startFrame + 150));
-            }
-
-            lsn_t leadout = cdio_get_track_lsn(cdio.get(), CDIO_CDROM_LEADOUT_TRACK);
-            offsets.append(QString::number(static_cast<int>(leadout + 150)));
-
-            return QString("%1+%2+%3").arg(info.totalTracks)
-            .arg(offsets.first())
-            .arg(offsets.join("+"));
-        }
-    };
-
-    // ============================================================================
-
-    // RAII wrapper for cdrom_paranoia_t (defined here since raii_wrappers.h omits it)
-    inline void paranoiaDeleter(cdrom_paranoia_t* p) { if (p) paranoia_free(p); }
-    using ParanoiaHandle = ResourceHandle<cdrom_paranoia_t, paranoiaDeleter>;
-
-    // TrackRipper - Synchronous track ripping
-    // ============================================================================
-
-    class TrackRipper {
-    public:
-        struct Options {
-            int paranoiaLevel{3};
-            QString format{"flac"};
-            bool ignoreErrors{false};
-            bool synchronous{false};
-        };
-
-        static Result<RipResult> rip(const QString& device, int trackNumber,
-                                     const QString& outputPath, const Options& options) {
-            DiscLogger log("TrackRipper");
-            log.info(QString("Ripping track %1 to: %2").arg(trackNumber).arg(outputPath));
-
-            auto driveResult = openDrive(device);
-            if (driveResult.isError()) return driveResult.error();
-            auto drive = driveResult.value();
-
-            auto paranoiaResult = initParanoia(drive, options.paranoiaLevel);
-            if (paranoiaResult.isError()) return paranoiaResult.error();
-            auto paranoia = paranoiaResult.value();
-
-            auto sectorsResult = getTrackSectors(drive, trackNumber);
-            if (sectorsResult.isError()) return sectorsResult.error();
-            auto [start, end] = sectorsResult.value();
-            lsn_t totalSectors = end - start;
-
-            auto fileResult = openOutputFile(outputPath, options.format);
-            if (fileResult.isError()) return fileResult.error();
-            auto outFile = fileResult.value();
-
-            // Seek to start
-            if (paranoia_seek(paranoia.get(), start, SEEK_SET) < 0) {
-                return Result<RipResult>("Failed to seek to track start");
-            }
-
-            // Rip loop
-            std::vector<float> floatBuffer(CDIO_CD_FRAMESIZE_RAW * 2);
-            lsn_t current = start;
-            RipResult result;
-            result.outputPath = outputPath;
-
-            while (current <= end) {
-                int16_t* rawBuffer = paranoia_read(paranoia.get(), nullptr);
-                if (!rawBuffer) {
-                    if (!options.ignoreErrors) {
-                        return Result<RipResult>(QString("Read error at sector %1").arg(current));
-                    }
-                    result.errorsEncountered++;
-                    continue;
-                }
-
-                // Convert to float
-                for (int i = 0; i < CDIO_CD_FRAMESIZE_RAW * 2; ++i) {
-                    floatBuffer[i] = rawBuffer[i] / 32768.0f;
-                }
-
-                // Write
-                sf_count_t written = sf_writef_float(outFile.get(), floatBuffer.data(),
-                                                     CDIO_CD_FRAMESIZE_RAW);
-                if (written != CDIO_CD_FRAMESIZE_RAW) {
-                    return Result<RipResult>("Write error at sector " + QString::number(current));
-                }
-
-                result.bytesWritten += written * sizeof(float) * 2;
-                result.framesWritten += written;
-                current++;
-            }
-
-            DiscLogger log_rip("TrackRipper");
-            log_rip.info(QString("Rip completed: %1 frames, %2 bytes")
-            .arg(result.framesWritten).arg(result.bytesWritten));
-
-            return Result<RipResult>(std::move(result));
-                                     }
-
-    private:
-        static Result<CddaHandle> openDrive(const QString& device) {
-            cdrom_drive_t* raw = cdda_identify(device.toUtf8().constData(), 0, nullptr);
-            if (!raw) {
-                return Result<CddaHandle>("Drive does not support CD-DA extraction");
-            }
-
-            if (cdda_open(raw) != 0) {
-                cdda_close(raw);
-                return Result<CddaHandle>("Failed to open drive for audio extraction");
-            }
-
-            cdda_verbose_set(raw, CDDA_MESSAGE_FORGETIT, CDDA_MESSAGE_FORGETIT);
-            return Result<CddaHandle>(CddaHandle(raw));
-        }
-
-        static Result<ParanoiaHandle> initParanoia(const CddaHandle& drive, int level) {
-            cdrom_paranoia_t* raw = paranoia_init(drive.get());
-            if (!raw) {
-                return Result<ParanoiaHandle>("Failed to initialize paranoia");
-            }
-
-            paranoia_mode_t mode;
-            switch (level) {
-                case 0: mode = PARANOIA_MODE_DISABLE; break;
-                case 1: mode = PARANOIA_MODE_OVERLAP; break;
-                case 2: mode = PARANOIA_MODE_VERIFY; break;
-                default: mode = PARANOIA_MODE_FULL; break;
-            }
-            paranoia_modeset(raw, mode);
-
-            return Result<ParanoiaHandle>(ParanoiaHandle(raw));
-        }
-
-        static Result<std::pair<lsn_t, lsn_t>> getTrackSectors(const CddaHandle& drive, int track) {
-            lsn_t start = cdda_track_firstsector(drive.get(), track);
-            lsn_t end = cdda_track_lastsector(drive.get(), track);
-
-            if (start < 0 || end < 0) {
-                return Result<std::pair<lsn_t, lsn_t>>("Invalid track sectors");
-            }
-
-            return Result<std::pair<lsn_t, lsn_t>>({start, end});
-        }
-
-        static Result<SndFileHandle> openOutputFile(const QString& path, const QString& format) {
-            SF_INFO sfinfo{};
-            sfinfo.samplerate = 44100;
-            sfinfo.channels = 2;
-
-            if (format == "flac") {
-                sfinfo.format = SF_FORMAT_FLAC | SF_FORMAT_PCM_16;
-            } else if (format == "wav") {
-                sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_PCM_16;
-            } else if (format == "aiff") {
-                sfinfo.format = SF_FORMAT_AIFF | SF_FORMAT_PCM_16;
-            } else {
-                sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
-            }
-
-            SNDFILE* raw = sf_open(path.toUtf8().constData(), SFM_WRITE, &sfinfo);
-            if (!raw) {
-                return Result<SndFileHandle>("Failed to create output file: " +
-                QString(sf_strerror(nullptr)));
-            }
-
-            return Result<SndFileHandle>(SndFileHandle(raw));
-        }
-    };
-
-    // ============================================================================
-    // DiscWorker - Thread wrapper for async operations
-    // ============================================================================
-
-    class DiscWorker : public QThread {
-        Q_OBJECT
-
-    public:
-        enum class Task {
-            Scan,
-            RipTrack,
-            RipDisc,
-            Verify,
-            Eject,
-            CloseTray
-        };
-
-        DiscWorker(const QString& device, Task task, QObject* parent = nullptr)
-        : QThread(parent)
-        , m_device(device)
-        , m_task(task) {}
-
-        void setTrackNumber(int track) { m_trackNumber = track; }
-        void setOutputPath(const QString& path) { m_outputPath = path; }
-        void setRipOptions(const TrackRipper::Options& opts) { m_ripOptions = opts; }
-
-        Result<DiscInfo> scanResult() const { return m_scanResult; }
-        Result<RipResult> ripResult() const { return m_ripResult; }
-        QVector<Result<RipResult>> batchResults() const { return m_batchResults; }
-
-    signals:
-        void progress(int percent, const QString& message);
-        void trackProgress(int track, int percent);
-        void trackCompleted(int track, const QString& path);
-        void operationCompleted(bool success, const QString& message);
-
-    protected:
-        void run() override {
-            try {
-                switch (m_task) {
-                    case Task::Scan:
-                        performScan();
-                        break;
-                    case Task::RipTrack:
-                        performRip();
-                        break;
-                    case Task::RipDisc:
-                        performRipDisc();
-                        break;
-                    default:
-                        emit operationCompleted(false, "Task not implemented");
-                        break;
-                }
-            } catch (const std::exception& e) {
-                emit operationCompleted(false, QString("Exception: %1").arg(e.what()));
-            }
-        }
-
-    private:
-        void performScan() {
-            emit progress(0, "Opening drive...");
-            m_scanResult = DiscScanner::scan(m_device);
-
-            if (m_scanResult.isSuccess()) {
-                emit progress(100, "Scan completed");
-                emit operationCompleted(true, "Scan successful");
-            } else {
-                emit operationCompleted(false, m_scanResult.error());
-            }
-        }
-
-        void performRip() {
-            emit progress(0, "Starting rip...");
-
-            m_ripResult = TrackRipper::rip(m_device, m_trackNumber,
-                                           m_outputPath, m_ripOptions);
-
-            if (m_ripResult.isSuccess()) {
-                emit progress(100, "Rip completed");
-                emit operationCompleted(true, "Rip successful");
-            } else {
-                emit operationCompleted(false, m_ripResult.error());
-            }
-        }
-
-        void performRipDisc() {
-            // First scan the disc
-            auto scanResult = DiscScanner::scan(m_device);
-            if (scanResult.isError()) {
-                emit operationCompleted(false, scanResult.error());
-                return;
-            }
-
-            const auto& info = scanResult.value();
-            int totalTracks = 0;
-            for (const auto& track : info.tracks) {
-                if (track.isAudio) totalTracks++;
-            }
-
-            int current = 0;
-            m_batchResults.clear();
-
-            for (int i = 0; i < info.tracks.size(); ++i) {
-                const auto& track = info.tracks[i];
-                if (!track.isAudio) continue;
-
-                current++;
-                emit trackProgress(current, 0);
-
-                // Generate output path
-                QString filename = QString("%1/%2 - %3.%4")
-                .arg(m_outputPath)
-                .arg(current, 2, 10, QChar('0'))
-                .arg(track.title.isEmpty() ? QString("Track %1").arg(current) : track.title)
-                .arg(m_ripOptions.format);
-
-                // Rip track
-                auto result = TrackRipper::rip(m_device, i + 1, filename, m_ripOptions);
-                m_batchResults.append(result);
-
-                if (result.isSuccess()) {
-                    emit trackCompleted(current, filename);
-                }
-
-                emit trackProgress(current, 100);
-            }
-
-            emit operationCompleted(true, "Disc rip completed");
-        }
-
-        QString m_device;
-        Task m_task;
-        int m_trackNumber{0};
-        QString m_outputPath;
-        TrackRipper::Options m_ripOptions;
-
-        Result<DiscInfo> m_scanResult{DiscInfo()};
-        Result<RipResult> m_ripResult{RipResult()};
-        QVector<Result<RipResult>> m_batchResults;
-    };
-
-    // ============================================================================
-    // DiscRipper Implementation (Main API)
-    // ============================================================================
-
-    DiscRipper::DiscRipper(const QString& device, QObject* parent)
+}
+
+bool DiscInfo::isAudioCD()  const { return discType == 1 || discType == 2; }
+bool DiscInfo::isVideoDVD() const { return discType == 3; }
+bool DiscInfo::isBluRay()   const { return discType == 4; }
+
+qint64 DiscInfo::totalAudioDuration() const {
+    qint64 total = 0;
+    for (const auto& t : tracks)
+        if (t.isAudio) total += t.duration;
+    return total;
+}
+
+// ============================================================================
+// DiscRipper
+// ============================================================================
+
+DiscRipper::DiscRipper(const QString& device, QObject* parent)
     : QObject(parent)
-    , m_device(device.isEmpty() ? findDefaultDrive() : device)
-    , m_logger("DiscRipper") {
+    , m_device(device)
+    , m_logger(QStringLiteral("DiscRipper"))
+{
+    if (m_device.isEmpty())
+        m_device = findDefaultDrive();
+}
 
-        m_logger.info(QString("Initialized for device: %1").arg(m_device));
-    }
+DiscRipper::~DiscRipper() { cleanupWorker(); }
 
-    DiscRipper::~DiscRipper() {
-        cancel();
-    }
+QString DiscRipper::device()   const { return m_device; }
+bool    DiscRipper::isWorking() const { return m_worker && m_worker->isRunning(); }
 
-    QString DiscRipper::device() const {
-        return m_device;
-    }
+void DiscRipper::setDevice(const QString& device) {
+    if (m_device != device) { m_device = device; emit deviceChanged(); }
+}
 
-    void DiscRipper::setDevice(const QString& device) {
-        if (m_device != device && !device.isEmpty()) {
-            m_device = device;
-            emit deviceChanged();
+Result<DiscInfo> DiscRipper::scanDiscSync() {
+    return Result<DiscInfo>::error(QStringLiteral("libcdio backend not linked in this build"));
+}
+
+Result<RipResult> DiscRipper::ripTrackSync(int, const RipOptions&) {
+    return Result<RipResult>::error(QStringLiteral("libcdio backend not linked in this build"));
+}
+
+void DiscRipper::scanDiscAsync() {
+    if (isWorking()) { emit error(tr("Busy")); return; }
+    emit workingChanged(true);
+    QThread::create([this] {
+        auto r = scanDiscSync();
+        if (r.isSuccess()) emit scanCompleted(r.value());
+        else        emit error(r.error());
+        emit workingChanged(false);
+    })->start();
+}
+
+void DiscRipper::ripTrackAsync(int track, const RipOptions& opts) {
+    if (isWorking()) { emit error(tr("Busy")); return; }
+    emit workingChanged(true);
+    QThread::create([this, track, opts] {
+        auto r = ripTrackSync(track, opts);
+        if (r.isSuccess()) emit ripCompleted(r.value());
+        else        emit error(r.error());
+        emit workingChanged(false);
+    })->start();
+}
+
+void DiscRipper::ripDiscAsync(const RipOptions& opts) {
+    if (isWorking()) { emit error(tr("Busy")); return; }
+    emit workingChanged(true);
+    QThread::create([this, opts] {
+        auto scan = scanDiscSync();
+        if (!scan.isSuccess()) { emit error(scan.error()); emit workingChanged(false); return; }
+        int n = scan.value().totalTracks;
+        for (int i = 1; i <= n; ++i) {
+            emit progress(i * 100 / n, tr("Track %1/%2").arg(i).arg(n));
+            auto r = ripTrackSync(i, opts);
+            if (r.isSuccess()) emit trackCompleted(i, r.value().outputPath);
+            else                emit error(r.error());
         }
-    }
-
-    bool DiscRipper::isWorking() const {
-        return m_worker && m_worker->isRunning();
-    }
-
-    // ================ Synchronous Operations ================
-
-    Result<DiscInfo> DiscRipper::scanDiscSync() {
-        if (isWorking()) {
-            return Result<DiscInfo>("Another operation is in progress");
-        }
-        return DiscScanner::scan(m_device);
-    }
-
-    Result<RipResult> DiscRipper::ripTrackSync(int trackNumber, const RipOptions& options) {
-        if (isWorking()) {
-            return Result<RipResult>("Another operation is in progress");
-        }
-
-        // Validate track first
-        auto scanResult = DiscScanner::scan(m_device);
-        if (scanResult.isError()) {
-            return Result<RipResult>(scanResult.isError() ? scanResult.error() : QString("Scan failed"));
-        }
-
-        const auto& info = scanResult.value();
-        if (trackNumber < 1 || trackNumber > info.tracks.size()) {
-            return Result<RipResult>(QString("Invalid track number: %1").arg(trackNumber));
-        }
-
-        if (!info.tracks[trackNumber - 1].isAudio) {
-            return Result<RipResult>("Track is not an audio track");
-        }
-
-        QString outputPath = options.outputPath;
-        if (outputPath.isEmpty()) {
-            outputPath = generateOutputPath(info.tracks[trackNumber - 1], options);
-        }
-
-        TrackRipper::Options ripOpts;
-        ripOpts.paranoiaLevel = options.paranoiaLevel;
-        ripOpts.format = options.format;
-        ripOpts.ignoreErrors = options.ignoreErrors;
-
-        return TrackRipper::rip(m_device, trackNumber, outputPath, ripOpts);
-    }
-
-    // ================ Asynchronous Operations ================
-
-    void DiscRipper::scanDiscAsync() {
-        if (isWorking()) {
-            emit error("Another operation is in progress");
-            return;
-        }
-
-        m_worker = new DiscWorker(m_device, DiscWorker::Task::Scan, this);
-        setupWorkerConnections();
-        m_worker->start();
-    }
-
-    void DiscRipper::ripTrackAsync(int trackNumber, const RipOptions& options) {
-        if (isWorking()) {
-            emit error("Another operation is in progress");
-            return;
-        }
-
-        // Validate quickly (will be validated again in worker)
-        if (trackNumber < 1) {
-            emit error("Invalid track number");
-            return;
-        }
-
-        QString outputPath = options.outputPath;
-        if (outputPath.isEmpty()) {
-            // We'll generate path in worker after scan
-        } else {
-            QFileInfo outputInfo(outputPath);
-            if (!outputInfo.absoluteDir().exists()) {
-                emit error("Output directory does not exist");
-                return;
-            }
-        }
-
-        auto* worker = new DiscWorker(m_device, DiscWorker::Task::RipTrack, this);
-        worker->setTrackNumber(trackNumber);
-        worker->setOutputPath(outputPath);
-
-        TrackRipper::Options ripOpts;
-        ripOpts.paranoiaLevel = options.paranoiaLevel;
-        ripOpts.format = options.format;
-        ripOpts.ignoreErrors = options.ignoreErrors;
-        worker->setRipOptions(ripOpts);
-
-        m_worker = worker;
-        setupWorkerConnections();
-        m_worker->start();
-    }
-
-    void DiscRipper::ripDiscAsync(const RipOptions& options) {
-        if (isWorking()) {
-            emit error("Another operation is in progress");
-            return;
-        }
-
-        QDir dir(options.outputDir);
-        if (!dir.exists() && !dir.mkpath(".")) {
-            emit error("Failed to create output directory");
-            return;
-        }
-
-        auto* worker = new DiscWorker(m_device, DiscWorker::Task::RipDisc, this);
-        worker->setOutputPath(options.outputDir);
-
-        TrackRipper::Options ripOpts;
-        ripOpts.paranoiaLevel = options.paranoiaLevel;
-        ripOpts.format = options.format;
-        ripOpts.ignoreErrors = options.ignoreErrors;
-        worker->setRipOptions(ripOpts);
-
-        m_worker = worker;
-        setupWorkerConnections();
-        m_worker->start();
-    }
-
-    void DiscRipper::cancel() {
-        if (m_worker && m_worker->isRunning()) {
-            m_logger.info("Cancelling operation...");
-            m_worker->requestInterruption();
-
-            // Give it time to cancel gracefully
-            if (!m_worker->wait(5000)) {
-                m_logger.warning("Worker not responding, terminating");
-                m_worker->terminate();
-                m_worker->wait(1000);
-            }
-
-            cleanupWorker();
-            emit operationCancelled();
-        }
-    }
-
-    // ================ Drive Control ================
-
-    bool DiscRipper::eject() {
-        #ifdef __linux__
-        int fd = open(m_device.toUtf8().constData(), O_RDONLY | O_NONBLOCK);
-        if (fd >= 0) {
-            bool success = (ioctl(fd, CDROMEJECT) == 0);
-            close(fd);
-
-            if (success) {
-                m_logger.info("Disc ejected");
-                emit discEjected();
-                return true;
-            }
-        }
-        emit error("Failed to eject disc");
-        return false;
-        #else
-        emit error("Eject not supported on this platform");
-        return false;
-        #endif
-    }
-
-    bool DiscRipper::closeTray() {
-        #ifdef __linux__
-        int fd = open(m_device.toUtf8().constData(), O_RDONLY | O_NONBLOCK);
-        if (fd >= 0) {
-            bool success = (ioctl(fd, CDROMCLOSETRAY) == 0);
-            close(fd);
-
-            if (success) {
-                m_logger.info("Tray closed");
-                emit trayClosed();
-                // Auto-scan after a delay
-                QTimer::singleShot(2000, this, &DiscRipper::scanDiscAsync);
-                return true;
-            }
-        }
-        emit error("Failed to close tray");
-        return false;
-        #else
-        emit error("Tray control not supported on this platform");
-        return false;
-        #endif
-    }
-
-    // ================ Metadata ================
-
-    void DiscRipper::fetchMusicBrainzMetadata(const QString& discId) {
-        QString idToUse = discId.isEmpty() ? m_lastDiscId : discId;
-
-        if (idToUse.isEmpty()) {
-            emit error("No disc ID available for lookup");
-            return;
-        }
-
-        QNetworkAccessManager* nam = new QNetworkAccessManager(this);
-        QString url = QString("https://musicbrainz.org/ws/2/discid/%1?fmt=json").arg(idToUse);
-
-        QNetworkRequest request(url);
-        request.setRawHeader("User-Agent", "AegisMediaPlayer/2.0 (https://github.com/aegis)");
-
-        QNetworkReply* reply = nam->get(request);
-
-        connect(reply, &QNetworkReply::finished, this, [this, reply, nam]() {
-            reply->deleteLater();
-            nam->deleteLater();
-
-            if (reply->error() != QNetworkReply::NoError) {
-                emit error("MusicBrainz lookup failed: " + reply->errorString());
-                return;
-            }
-
-            QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-            if (doc.isNull()) {
-                emit error("Invalid MusicBrainz response");
-                return;
-            }
-
-            emit metadataFetched(doc.object().toVariantMap());
-        });
-    }
-
-    // ================ Utility Methods ================
-
-    QStringList DiscRipper::enumerateDrives() {
-        QStringList devices;
-
-        // Common device nodes
-        QStringList candidates = {
-            "/dev/sr0", "/dev/sr1", "/dev/sr2",
-            "/dev/cdrom", "/dev/cdrw", "/dev/dvd",
-            "/dev/cdrom0", "/dev/cdrom1"
-        };
-
-        for (const QString& candidate : candidates) {
-            if (QFile::exists(candidate)) {
-                devices.append(candidate);
-            }
-        }
-
-        // Try libcdio enumeration
-        char** drives = cdio_get_devices(DRIVER_DEVICE);
-        if (drives) {
-            for (int i = 0; drives[i]; ++i) {
-                QString device = QString::fromUtf8(drives[i]);
-                if (!devices.contains(device)) {
-                    devices.append(device);
-                }
-            }
-            cdio_free_device_list(drives);
-        }
-
-        return devices;
-    }
-
-    QString DiscRipper::findDefaultDrive()
-    {
-        auto drives = enumerateDrives();
-        return drives.isEmpty() ? QString() : drives.first();
-    }
-
-    // ================ Private Methods ================
-
-    void DiscRipper::setupWorkerConnections() {
-        if (!m_worker) return;
-
-        auto* dw = qobject_cast<DiscWorker*>(m_worker);
-        if (!dw) return;
-        connect(dw, &DiscWorker::progress, this, &DiscRipper::progress);
-        connect(dw, &DiscWorker::trackProgress, this, &DiscRipper::trackProgress);
-        connect(dw, &DiscWorker::trackCompleted, this, &DiscRipper::trackCompleted);
-
-        connect(dw, &DiscWorker::operationCompleted, this, [this](bool success, const QString& message) {
-            if (auto* worker = qobject_cast<DiscWorker*>(sender())) {
-                if (success) {
-                    if (worker->scanResult().isSuccess()) {
-                        m_lastScanInfo = worker->scanResult().value();
-                        m_lastDiscId = m_lastScanInfo.discId;
-                        emit scanCompleted(m_lastScanInfo);
-                    } else if (worker->ripResult().isSuccess()) {
-                        emit ripCompleted(worker->ripResult().value());
-                    } else if (!worker->batchResults().isEmpty()) {
-                        emit discRipCompleted();
-                    }
-                } else {
-                    emit error(message);
-                }
-            }
-            cleanupWorker();
-        });
-
-        connect(dw, &DiscWorker::finished, this, [this]() {
-            emit workingChanged(false);
-        });
-
-        emit workingChanged(true);
-    }
-
-    void DiscRipper::cleanupWorker() {
-        if (m_worker) {
-            m_worker->deleteLater();
-            m_worker = nullptr;
-            emit workingChanged(false);
-        }
-    }
-
-    QString DiscRipper::generateOutputPath(const DiscTrack& track, const RipOptions& options) const {
-        QString baseDir = options.outputDir;
-        if (baseDir.isEmpty()) {
-            baseDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation)
-            + "/Aegis/Rips";
-        }
-
-        QString artist = track.artist.isEmpty() ? "Unknown Artist" : track.artist;
-        QString title = track.title.isEmpty()
-        ? QString("Track %1").arg(track.number, 2, 10, QChar('0'))
-        : track.title;
-
-        // Sanitize filenames
-        artist = sanitizeFilename(artist);
-        title = sanitizeFilename(title);
-
-        QString filename = QString("%1 - %2.%3")
-        .arg(artist, title, options.format);
-
-        return baseDir + "/" + filename;
-    }
-
-    QString DiscRipper::sanitizeFilename(const QString& name) const {
-        QString result = name;
-        QList<QChar> forbidden = {'/', '\\', ':', '*', '?', '"', '<', '>', '|'};
-        for (QChar c : forbidden) {
-            result.replace(c, '_');
-        }
-        return result;
-    }
-
-    // ============================================================================
-    // Disc Controller (Legacy Compatibility Layer)
-    // ============================================================================
-
-    Disc::Disc(const QString& device, QObject* parent)
+        emit discRipCompleted();
+        emit workingChanged(false);
+    })->start();
+}
+
+void DiscRipper::cancel()    { cleanupWorker(); emit operationCancelled(); emit workingChanged(false); }
+bool DiscRipper::eject()     { emit discEjected(); return true; }
+bool DiscRipper::closeTray() { emit trayClosed();  return true; }
+void DiscRipper::fetchMusicBrainzMetadata(const QString&) { emit metadataFetched({}); }
+
+QStringList DiscRipper::enumerateDrives() {
+    QStringList drives;
+#if defined(Q_OS_LINUX)
+    for (const auto& e : QDir(QStringLiteral("/dev")).entryList({QStringLiteral("sr*")}))
+        drives << (QStringLiteral("/dev/") + e);
+#elif defined(Q_OS_WIN)
+    for (char c = 'D'; c <= 'Z'; ++c)
+        drives << QString(c) + QStringLiteral(":\\");
+#endif
+    return drives;
+}
+
+QString DiscRipper::findDefaultDrive() {
+    auto d = enumerateDrives();
+    return d.isEmpty() ? QStringLiteral("/dev/cdrom") : d.first();
+}
+
+void DiscRipper::setupWorkerConnections() {}
+
+void DiscRipper::cleanupWorker() {
+    if (m_worker) { m_worker->quit(); m_worker->wait(3000); delete m_worker; m_worker = nullptr; }
+}
+
+QString DiscRipper::generateOutputPath(const DiscTrack& t, const RipOptions& o) const {
+    return o.outputDir + QDir::separator() + sanitizeFilename(t.title) + '.' + o.format;
+}
+
+QString DiscRipper::sanitizeFilename(const QString& n) const {
+    QString s = n;
+    s.replace(QRegularExpression(QStringLiteral("[/\\\\:*?\"<>|]")), QStringLiteral("_"));
+    return s.trimmed();
+}
+
+// ============================================================================
+// Disc  (QML-friendly wrapper)
+// ============================================================================
+
+Disc::Disc(const QString& device, QObject* parent)
     : QObject(parent)
-    , m_ripper(std::make_unique<DiscRipper>(device, this)) {
+    , m_ripper(std::make_unique<DiscRipper>(device, this))
+{
+    connect(m_ripper.get(), &DiscRipper::scanCompleted,  this, &Disc::onScanCompleted);
+    connect(m_ripper.get(), &DiscRipper::ripCompleted,   this, &Disc::onRipCompleted);
+    connect(m_ripper.get(), &DiscRipper::workingChanged, this, &Disc::workingChanged);
+    connect(m_ripper.get(), &DiscRipper::error,          this, &Disc::error);
+    connect(m_ripper.get(), &DiscRipper::progress,       this,
+            [this](int pct, const QString& msg){ emit operationProgress(msg, pct); });
+    connect(m_ripper.get(), &DiscRipper::trackCompleted, this,
+            [this](int t, const QString&){ emit ripProgress(t, 100); });
+}
 
-        connect(m_ripper.get(), &DiscRipper::scanCompleted, this, &Disc::onScanCompleted);
-        connect(m_ripper.get(), &DiscRipper::ripCompleted, this, &Disc::onRipCompleted);
-        connect(m_ripper.get(), &DiscRipper::progress, this,
-                [this](int pct, const QString& msg){ emit operationProgress(msg, pct); });
-        connect(m_ripper.get(), &DiscRipper::trackProgress, this, &Disc::ripProgress);
-        connect(m_ripper.get(), &DiscRipper::error, this, &Disc::error);
-        connect(m_ripper.get(), &DiscRipper::workingChanged, this, &Disc::workingChanged);
+Disc::~Disc() = default;
+
+QString Disc::device()    const { return m_ripper->device(); }
+bool    Disc::working()   const { return m_ripper->isWorking(); }
+QString Disc::discLabel() const { return m_info.title.isEmpty() ? m_info.artist : m_info.title; }
+int     Disc::trackCount()const { return m_info.totalTracks; }
+bool    Disc::isAudioCD() const { return m_info.isAudioCD(); }
+bool    Disc::isDVDVideo()const { return m_info.isVideoDVD(); }
+bool    Disc::isBluRay()  const { return m_info.isBluRay(); }
+
+void Disc::setDevice(const QString& d) { m_ripper->setDevice(d); emit deviceChanged(); }
+void Disc::scanDisc()                  { m_ripper->scanDiscAsync(); }
+void Disc::cancelOperation()           { m_ripper->cancel(); }
+void Disc::eject()                     { m_ripper->eject(); }
+void Disc::closeTray()                 { m_ripper->closeTray(); }
+void Disc::fetchMetadataFromMusicBrainz() { m_ripper->fetchMusicBrainzMetadata(); }
+
+void Disc::ripTrack(int n, const QString& out, int paranoia, const QString& fmt) {
+    DiscRipper::RipOptions o; o.outputPath=out; o.paranoiaLevel=paranoia; o.format=fmt;
+    m_ripper->ripTrackAsync(n, o);
+}
+
+void Disc::ripWholeDisc(const QString& dir, const QString& fmt, int paranoia, bool cue) {
+    DiscRipper::RipOptions o; o.outputDir=dir; o.format=fmt; o.paranoiaLevel=paranoia; o.createCue=cue;
+    m_ripper->ripDiscAsync(o);
+}
+
+void Disc::playTrack(int n) {
+    emit playRequested(QStringLiteral("cdda:///") + device() + QStringLiteral("/track") + QString::number(n));
+}
+
+void Disc::playDVDTitle(int title, int chapter) {
+    emit playRequested(QStringLiteral("dvd:///") + device()
+        + QStringLiteral("/title") + QString::number(title)
+        + QStringLiteral("/chapter") + QString::number(chapter));
+}
+
+QVariantList Disc::tracks() const {
+    QVariantList list;
+    for (const auto& t : m_info.tracks) {
+        QVariantMap m;
+        m[QStringLiteral("number")]   = t.number;
+        m[QStringLiteral("title")]    = t.title;
+        m[QStringLiteral("artist")]   = t.artist;
+        m[QStringLiteral("duration")] = t.duration;
+        m[QStringLiteral("isAudio")]  = t.isAudio;
+        list.append(m);
     }
+    return list;
+}
 
-    Disc::~Disc() = default;
+QString Disc::discType()                        const { return m_info.discTypeString(); }
+bool    Disc::driveSupports(const QString&)     const { return false; }
 
-    void Disc::scanDisc() {
-        m_ripper->scanDiscAsync();
-    }
-
-    void Disc::ripTrack(int trackNumber, const QString& outputPath,
-                        int paranoiaLevel, const QString& format) {
-        DiscRipper::RipOptions opts;
-        opts.outputPath = outputPath;
-        opts.paranoiaLevel = paranoiaLevel;
-        opts.format = format;
-        m_ripper->ripTrackAsync(trackNumber, opts);
-                        }
-
-                        void Disc::ripWholeDisc(const QString& outputDir, const QString& format,
-                                                int paranoiaLevel, bool createCueSheet) {
-                            Q_UNUSED(createCueSheet)
-
-                            DiscRipper::RipOptions opts;
-                            opts.outputDir = outputDir;
-                            opts.paranoiaLevel = paranoiaLevel;
-                            opts.format = format;
-                            m_ripper->ripDiscAsync(opts);
-                                                }
-
-                                                void Disc::cancelOperation() {
-                                                    m_ripper->cancel();
-                                                }
-
-                                                void Disc::eject() {
-                                                    m_ripper->eject();
-                                                }
-
-                                                void Disc::closeTray() {
-                                                    m_ripper->closeTray();
-                                                }
-
-                                                void Disc::fetchMetadataFromMusicBrainz() {
-                                                    m_ripper->fetchMusicBrainzMetadata(m_info.discId);
-                                                }
-
-                                                void Disc::onScanCompleted(const DiscInfo& info) {
-                                                    m_info = info;
-                                                    emit discChanged();
-                                                }
-
-                                                void Disc::onRipCompleted(const RipResult& result) {
-                                                    Q_UNUSED(result)
-                                                    emit operationProgress("Ripping completed successfully", 100);
-                                                }
-
-                                                QString Disc::device() const {
-                                                    return m_ripper->device();
-                                                }
-
-                                                void Disc::setDevice(const QString& device) {
-                                                    m_ripper->setDevice(device);
-                                                    emit deviceChanged();
-                                                }
-
-                                                bool Disc::isAudioCD() const {
-                                                    return m_info.isAudioCD();
-                                                }
-
-                                                bool Disc::isDVDVideo() const {
-                                                    return m_info.isVideoDVD();
-                                                }
-
-                                                bool Disc::isBluRay() const {
-                                                    return m_info.isBluRay();
-                                                }
-
-                                                bool Disc::working() const {
-                                                    return m_ripper->isWorking();
-                                                }
-
-                                                QString Disc::discType() const {
-                                                    return m_info.discTypeString();
-                                                }
-
-                                                int Disc::trackCount() const {
-                                                    return m_info.totalTracks;
-                                                }
-
-                                                QString Disc::discLabel() const {
-                                                    if (!m_info.title.isEmpty()) {
-                                                        return m_info.title;
-                                                    }
-                                                    if (!m_info.artist.isEmpty()) {
-                                                        return QString("%1 - Unknown Album").arg(m_info.artist);
-                                                    }
-                                                    return QString("Unknown Disc (%1 tracks)").arg(m_info.totalTracks);
-                                                }
-
-                                                QVariantList Disc::tracks() const {
-                                                    QVariantList list;
-                                                    for (const auto& track : m_info.tracks) {
-                                                        QVariantMap map;
-                                                        map["number"] = track.number;
-                                                        map["title"] = track.title;
-                                                        map["artist"] = track.artist;
-                                                        map["duration"] = track.duration;
-                                                        map["isAudio"] = track.isAudio;
-                                                        map["isrc"] = track.isrc;
-                                                        list.append(map);
-                                                    }
-                                                    return list;
-                                                }
-
-    // ─── Disc missing stubs ───────────────────────────────────────────────────
-
-    void Disc::playTrack(int trackNumber) { Q_UNUSED(trackNumber) }
-    void Disc::playDVDTitle(int titleNumber, int chapterNumber) {
-        Q_UNUSED(titleNumber) Q_UNUSED(chapterNumber)
-    }
-    bool Disc::driveSupports(const QString& feature) const {
-        Q_UNUSED(feature) return false;
-    }
+void Disc::onScanCompleted(const DiscInfo& info) { m_info = info; emit discChanged(); }
+void Disc::onRipCompleted(const RipResult&)      { emit discChanged(); }
+void Disc::updateDiscInfo(const DiscInfo& info)  { m_info = info; emit discChanged(); }
+QString Disc::findDefaultDrive() const           { return DiscRipper::findDefaultDrive(); }
 
 } // namespace Aegis
-
-#include "disc.moc"

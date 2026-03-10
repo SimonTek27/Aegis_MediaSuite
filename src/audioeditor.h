@@ -77,16 +77,42 @@ namespace Aegis {
         Q_PROPERTY(bool modified READ modified NOTIFY modifiedChanged)
         Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoStateChanged)
         Q_PROPERTY(bool canRedo READ canRedo NOTIFY undoStateChanged)
+        Q_PROPERTY(bool canPaste READ canPaste NOTIFY clipboardChanged)
 
         bool canUndo() const { return !m_undoStack.isEmpty(); }
         bool canRedo() const { return !m_redoStack.isEmpty(); }
+        bool canPaste() const { return m_hasClipboard; }
+
         Q_PROPERTY(QString filePath READ filePath NOTIFY filePathChanged)
+        // QML alias: "currentFile" -> filePath
+        Q_PROPERTY(QString currentFile READ filePath NOTIFY filePathChanged)
+
         Q_PROPERTY(Aegis::AudioFormat format READ format NOTIFY formatChanged)
         Q_PROPERTY(qint64 totalFrames READ totalFrames NOTIFY bufferChanged)
         Q_PROPERTY(double duration READ duration NOTIFY bufferChanged)
+
+        // QML alias: "playbackPosition" -> position
         Q_PROPERTY(double position READ position WRITE setPosition NOTIFY positionChanged)
+        Q_PROPERTY(double playbackPosition READ position NOTIFY positionChanged)
+
         Q_PROPERTY(Selection selection READ selection WRITE setSelection NOTIFY selectionChanged)
-        Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY playbackStateChanged)
+        // Convenience flat properties derived from selection (in seconds)
+        Q_PROPERTY(double selectionStart READ selectionStartSecs NOTIFY selectionChanged)
+        Q_PROPERTY(double selectionEnd   READ selectionEndSecs   NOTIFY selectionChanged)
+        Q_PROPERTY(bool   hasSelection   READ hasSelection        NOTIFY selectionChanged)
+
+        Q_PROPERTY(bool isPlaying   READ isPlaying   NOTIFY playbackStateChanged)
+        Q_PROPERTY(bool isRecording READ isRecording NOTIFY recordingStateChanged)
+        Q_PROPERTY(bool isProcessing READ isProcessing NOTIFY processingStateChanged)
+        Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
+
+        // Format-derived convenience properties
+        Q_PROPERTY(int sampleRate   READ sampleRate   NOTIFY formatChanged)
+        Q_PROPERTY(int bitDepth     READ bitDepth     NOTIFY formatChanged)
+        Q_PROPERTY(int channelCount READ channelCount NOTIFY formatChanged)
+
+        // Audio device enumeration
+        Q_PROPERTY(QStringList availableDevices READ availableDevices CONSTANT)
 
     public:
         /**
@@ -161,6 +187,33 @@ namespace Aegis {
         double duration() const;
         WaveformCache* waveformCache() { return m_waveformCache; }
 
+        // Format-derived
+        int sampleRate()   const { return m_format.sampleRate; }
+        int bitDepth()     const { return m_format.bitsPerSample; }
+        int channelCount() const { return m_format.channels; }
+
+        // Selection convenience
+        double selectionStartSecs() const;
+        double selectionEndSecs()   const;
+        bool   hasSelection() const { return !m_selection.isEmpty(); }
+
+        // Playback / recording state
+        bool isRecording()  const { return m_recording; }
+        bool isProcessing() const { return m_processing; }
+        double progress()   const { return m_progress; }
+
+        // Device list
+        static QStringList availableDevices();
+
+        // ============== QML-friendly aliases ==============
+        // These mirror existing methods under the names expected by ui_audioeditor.qml
+        Q_INVOKABLE void newFile()                        { close(); }
+        Q_INVOKABLE bool openFile(const QString& path)    { return open(path); }
+        Q_INVOKABLE void goToStart()                      { gotoStart(); }
+        Q_INVOKABLE void goToEnd()                        { gotoEnd(); }
+        Q_INVOKABLE void togglePlayback();
+        Q_INVOKABLE void toggleRecording();
+
         // ============== Pillar Access ==============
         AudioEngine* audioEngine() const { return m_engine; }
         EffectChain* effectChain() const { return m_effects.get(); }
@@ -169,12 +222,16 @@ namespace Aegis {
     signals:
         void modifiedChanged();
         void undoStateChanged();
+        void clipboardChanged();
         void filePathChanged();
         void formatChanged();
         void bufferChanged();
         void positionChanged();
         void selectionChanged();
         void playbackStateChanged();
+        void recordingStateChanged();
+        void processingStateChanged();
+        void progressChanged();
         void effectProgress(int percent);
         void effectFinished(bool success);
         void error(const QString& message);
@@ -197,6 +254,10 @@ namespace Aegis {
         Selection m_selection;
         double m_position = 0.0;
         bool m_playing = false;
+        bool m_recording = false;
+        bool m_processing = false;
+        bool m_hasClipboard = false;
+        double m_progress = 0.0;
 
         // Cache
         WaveformCache* m_waveformCache;

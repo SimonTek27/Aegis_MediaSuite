@@ -207,6 +207,10 @@ namespace Aegis {
         Q_PROPERTY(double masterVolume READ masterVolume WRITE setMasterVolume NOTIFY masterVolumeChanged)
         Q_PROPERTY(double masterBpm READ masterBpm WRITE setMasterBpm NOTIFY masterBpmChanged)
         Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY stateChanged)
+        // QML needs: DJ.deckA, DJ.deckB, DJ.mixer (self-reference), DJ.startSession()
+        Q_PROPERTY(DJDeck* deckA READ deckA CONSTANT)
+        Q_PROPERTY(DJDeck* deckB READ deckB CONSTANT)
+        Q_PROPERTY(DJMixer* mixer READ mixer CONSTANT)
 
     public:
         /**
@@ -220,6 +224,12 @@ namespace Aegis {
         DJDeck* deckA() const;
         DJDeck* deckB() const;
         DJDeck* deck(int index) const;
+        // Self-reference so QML can pass DJ.mixer to sub-components
+        DJMixer* mixer() const { return const_cast<DJMixer*>(this); }
+
+        // QML session lifecycle
+        Q_INVOKABLE void startSession();
+        Q_INVOKABLE void endSession();
 
         // Mixer controls
         double crossfader() const; // 0.0 = A, 0.5 = center, 1.0 = B

@@ -275,7 +275,7 @@ bool DJDeck::loadTrack(const QString& filePath) {
         m_cueing = enable;
         if (enable && m_backend) {
             // Jump to cue point
-            m_backend->seek(m_cuePoint);
+            m_backend->seek(static_cast<qint64>(m_cuePoint * 1000.0));
         }
         emit cueStateChanged();
     }
@@ -286,7 +286,7 @@ bool DJDeck::loadTrack(const QString& filePath) {
 
     void DJDeck::setPosition(double seconds) {
         if (m_backend) {
-            m_backend->seek(seconds);
+            m_backend->seek(static_cast<qint64>(seconds * 1000.0));
         }
     }
 
@@ -442,6 +442,17 @@ bool DJDeck::loadTrack(const QString& filePath) {
         if (m_deckA) m_deckA->stop();
         if (m_deckB) m_deckB->stop();
         emit stateChanged();
+    }
+
+    void DJMixer::startSession() {
+        // Ensure audio engine and decks are initialised before QML begins interaction
+        if (!m_deckA || !m_deckB) setupMixer();
+        emit stateChanged();
+    }
+
+    void DJMixer::endSession() {
+        stop();
+        if (isRecording()) stopRecording();
     }
 
     bool DJMixer::startRecording(const QString& filePath) {

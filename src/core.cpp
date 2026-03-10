@@ -22,20 +22,108 @@ namespace Aegis {
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-
+    Core::Core(std::unique_ptr<IAudioBackend> audioBackend,
+               std::unique_ptr<IVideoBackend> videoBackend,
+               std::unique_ptr<IAudioEngine>  audioEngine,
+               QObject* parent)
+        : QObject(parent)
+        , m_audioBackend(std::move(audioBackend))
+        , m_videoBackend(std::move(videoBackend))
+        , m_audioEngine(std::move(audioEngine))
+    {
+        // Nothing further needed — backends are ready for use immediately.
+    }
 
     // ── Playback controls ─────────────────────────────────────────────────────
 
+    void Core::play()
+    {
+        if (m_audioBackend)
+            m_audioBackend->play();
+    }
 
+    void Core::pause()
+    {
+        if (m_audioBackend)
+            m_audioBackend->pause();
+    }
 
+    void Core::playPause()
+    {
+        if (!m_audioBackend) return;
+        if (m_audioBackend->state() == PlaybackState::Playing)
+            m_audioBackend->pause();
+        else
+            m_audioBackend->play();
+    }
 
+    void Core::stop()
+    {
+        if (m_audioBackend)
+            m_audioBackend->stop();
+    }
 
+    void Core::next()
+    {
+        int next = m_currentPlaylistIndex.load() + 1;
+        if (next < static_cast<int>(m_playlist.size()))
+            loadTrackImpl(next);
+    }
 
+    void Core::previous()
+    {
+        int prev = m_currentPlaylistIndex.load() - 1;
+        if (prev >= 0)
+            loadTrackImpl(prev);
+    }
 
-    // ── URL loading ───────────────────────────────────────────────────────────
+    void Core::setVolume(double volume)
+    {
+        m_volume.store(volume);
+        if (m_audioBackend)
+            m_audioBackend->setVolume(volume);
+    }
 
+    bool Core::hasVideo() const
+    {
+        if (m_videoBackend)
+            return m_videoBackend->hasVideo();
+        return false;
+    }
 
     // ── Playlist management ───────────────────────────────────────────────────
+
+    void Core::enqueue(const QUrl& url)
+    {
+        m_playlist.emplace_back(url, PlaylistItem::Type::File);
+        emit playlistChanged();
+        // Auto-start if this is the first item
+        if (m_currentPlaylistIndex.load() < 0)
+            loadTrackImpl(0);
+    }
+
+    void Core::clearPlaylist()
+    {
+        stop();
+        m_playlist.clear();
+        m_currentPlaylistIndex.store(-1);
+        emit playlistChanged();
+    }
+
+    void Core::onAudioBackendFinished()
+    {
+        // Advance to next track, or emit playlist end
+        int next = m_currentPlaylistIndex.load() + 1;
+        if (next < static_cast<int>(m_playlist.size()))
+            loadTrackImpl(next);
+        else
+            m_currentPlaylistIndex.store(-1);
+    }
+
+
+
+
+
 
 
     void Core::dequeue(int index)
@@ -89,7 +177,7 @@ namespace Aegis {
         const auto &item = m_playlist[static_cast<size_t>(index)];
 
         try {
-            m_audioBackend->load(item.url().toLocalFile());
+            m_audioBackend->open(QUrl::fromLocalFile(item.url().toLocalFile()));
             m_videoBackend->load(item.url());
 
             m_audioBackend->setVolume(m_volume.load());
@@ -135,6 +223,26 @@ namespace Aegis {
     {
         // Try to derive a title from the filename
         m_title = url.fileName();
+    }
+
+    void Core::seek(qint64 positionMs)
+    {
+        if (m_audioBackend)
+            m_audioBackend->seek(positionMs);
+    }
+
+
+    void Core::load(const QUrl& url)
+    {
+        if (m_audioBackend)
+            m_audioBackend->open(url);
+    }
+
+    PlaybackState Core::state() const
+    {
+        if (m_audioBackend)
+            return m_audioBackend->state();
+        return PlaybackState::Stopped;
     }
 
 } // namespace Aegis

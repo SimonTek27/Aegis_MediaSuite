@@ -62,7 +62,6 @@ namespace Aegis {
             m_channelConfigs[i].pan = (i % 2 == 0) ? -0.3 : 0.3; // Default L/R panning
         }
 
-        m_voices.resize(32);
         m_channelBuffers.resize(32);
     }
 
@@ -250,7 +249,7 @@ namespace Aegis {
                                           return QStringList() << "*.mod" << "*.xm" << "*.it" << "*.s3m";
                                       }
 
-                                      TrackerFormat ModTrackerClip::detectFormat(const QString& path) {
+    ModTrackerClip::TrackerFormat ModTrackerClip::detectFormat(const QString& path) {
                                           QString ext = QFileInfo(path).suffix().toLower();
                                           if (ext == "mod") return TrackerFormat::MOD;
                                           if (ext == "xm") return TrackerFormat::XM;
@@ -711,7 +710,7 @@ namespace Aegis {
 
                                           // Parse MOD header
                                           m_module.title = QString::fromLatin1(data.left(20)).trimmed();
-                                          m_module.format = TrackerFormat::MOD;
+                                          m_module.format = TrackerModule::Format::MOD;
 
                                           int numSamples = 31;
                                           int sampleHeaderSize = 30;

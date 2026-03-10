@@ -272,10 +272,14 @@ namespace Aegis {
         // QML properties
         Q_PROPERTY(bool burning READ burning NOTIFY burningChanged)
         Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
+        Q_PROPERTY(bool discPresent READ discPresent NOTIFY mediaStatusChanged)
         Q_PROPERTY(QString currentDevice READ currentDevice NOTIFY deviceChanged)
         Q_PROPERTY(int progress READ progress NOTIFY progressChanged)
         Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusChanged)
         Q_PROPERTY(QStringList availableDrives READ availableDrives NOTIFY drivesChanged)
+        // QML reads CDBurner.availableSpace as a property (separate from the signal)
+        Q_PROPERTY(qint64 availableSpaceFree  READ availableSpaceFree  NOTIFY spaceChanged)
+        Q_PROPERTY(qint64 availableSpaceTotal READ availableSpaceTotal NOTIFY spaceChanged)
 
     public:
         /**
@@ -289,27 +293,26 @@ namespace Aegis {
          */
         ~CDBurner();
 
-        // Static utility methods
-        /**
-         * @brief Enumerate all optical drives in the system
-         * @return List of device paths (e.g., ["/dev/sr0", "/dev/sr1"])
-         */
-        static QStringList enumerateDrives();
-
-        /**
-         * @brief Query capabilities of a specific optical drive
-         * @param device Device path (e.g., "/dev/sr0")
-         * @return BurnerCapabilities structure
-         */
-        static BurnerCapabilities getCapabilities(const QString &device);
+        // Static utility methods (for C++ callers)
+        static QStringList enumerateDrivesStatic();
+        static BurnerCapabilities getCapabilitiesStatic(const QString &device);
 
         // Property getters
         bool burning() const { return m_worker && m_worker->isRunning(); }
         bool ready() const { return !burning(); }
+        bool discPresent() const { return m_discPresent; }
         QString currentDevice() const { return m_currentDevice; }
         int progress() const { return m_progress; }
         QString statusMessage() const { return m_statusMessage; }
         QStringList availableDrives() const { return m_availableDrives; }
+        qint64 availableSpaceFree()  const { return m_spaceFree; }
+        qint64 availableSpaceTotal() const { return m_spaceTotal; }
+
+        // Q_INVOKABLE wrappers so QML can call CDBurner.enumerateDrives(),
+        // CDBurner.getCapabilities(device), CDBurner.startBurn(jobMap)
+        Q_INVOKABLE QStringList enumerateDrives()               { return enumerateDrivesStatic(); }
+        Q_INVOKABLE QVariantMap getCapabilities(const QString &device = QString());
+        Q_INVOKABLE void        startBurn(const QVariantMap &jobMap);
 
         // Audio CD burning
         /**
@@ -448,11 +451,13 @@ namespace Aegis {
         void progressChanged();
         void statusChanged();
         void drivesChanged();
+        void spaceChanged();  // emitted when availableSpaceFree/Total update
+        void mediaStatusChanged(bool present);  // NOTIFY for discPresent property
 
         // Operation signals
         void burnProgress(int percent, QString status);
         void burnFinished(bool success, QString message);
-        void availableSpace(qint64 bytesFree, qint64 bytesTotal);
+        void availableSpaceUpdated(qint64 bytesFree, qint64 bytesTotal); // renamed from availableSpace
         void driveEjected(const QString &device);
         void mediaChanged(const QString &device, bool present);
         void errorOccurred(QString errorMessage, int errorCode);
@@ -513,6 +518,9 @@ namespace Aegis {
         QStringList m_availableDrives;         ///< Cached list of available drives
         int m_progress = 0;                    ///< Current progress percentage
         QString m_statusMessage;               ///< Current status message
+        qint64 m_spaceFree  = 0;              ///< Last reported free space (bytes)
+        qint64 m_spaceTotal = 0;              ///< Last reported total space (bytes)
+        bool m_discPresent  = false;          ///< Whether optical media is present
         struct burn_drive_info *m_driveList = nullptr;  ///< libburn drive list
         unsigned int m_driveCount = 0;         ///< Number of drives in list
         bool m_libburnInitialized = false;     ///< libburn initialization flag

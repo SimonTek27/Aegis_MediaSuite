@@ -30,18 +30,39 @@
 #include "config_manager.h"
 #include "ipc_manager.h"
 #include "raii_wrappers.h"
+#include "audio.h"
+#include "help.h"
+#include "audioeditor.h"
+#include "audio_djmix.h"
+#include "discburner.h"
+#include "disc_labelmaker.h"
+#include "videoeditor.h"
+#include "audio_karaoke.h"
+#include "converter.h"
+#include "audio_middleware.h"
+#include "library.h"
+#include "platform.h"
 
 // ============================================================================
 // Application Version
 // ============================================================================
-#undef AEGIS_VERSION  // FIX: Undefine before defining to avoid redefinition warning
-#define AEGIS_VERSION "1.0.0"
+// AEGIS_VERSION is defined by CMake via add_compile_definitions().
+// Do not redefine it here. The value comes from project(VERSION x.y.z).
+#ifndef AEGIS_VERSION
+#  define AEGIS_VERSION "2.1.1"  // fallback if built outside CMake
+#endif
 
 namespace Aegis {
 
     // ============================================================================
     // Minimal Logger utility
     // ============================================================================
+    /**
+     * @brief A simple, minimal logger for internal use.
+     *
+     * This class provides a basic logging interface, wrapping Qt's message
+     * handlers. It prefixes each message with the logger's name for context.
+     */
     class Logger {
         QString m_name;
     public:
@@ -54,11 +75,18 @@ namespace Aegis {
 
     // ============================================================================
     // AppContext is defined in plugin_interface.h
+    // This struct holds the application's startup context and configuration.
 
     // ============================================================================
     // Command Line Parser
     // ============================================================================
 
+    /**
+     * @brief Parses and interprets command-line arguments.
+     *
+     * This class encapsulates the logic for parsing command-line arguments using
+     * QCommandLineParser and populating an AppContext structure with the results.
+     */
     class CommandLineParser {
     public:
         struct Result {
@@ -133,7 +161,7 @@ namespace Aegis {
                 result.context.mode = stringToMode(parser.value("mode"));
             }
 
-            // FIX: Use the AppContext fields directly
+            // Directly map parsed options to the AppContext structure.
             result.context.startMinimized = parser.isSet("minimized");
             result.context.enableTray = !parser.isSet("no-tray");
 
@@ -181,27 +209,27 @@ namespace Aegis {
 
     private:
         static AppMode stringToMode(const QString& modeStr) {
+            // Map from string identifiers (e.g., "player", "editor") to the AppMode enum.
             static const QHash<QString, AppMode> modeMap = {
-                // Primary executables
                 {"launcher",       AppMode::Launcher},
-                {"mediasuite",     AppMode::MediaSuite},
                 {"mediaplayer",    AppMode::MediaPlayer},
                 {"audioeditor",    AppMode::AudioEditor},
                 {"videoeditor",    AppMode::VideoEditor},
                 {"daw",            AppMode::DAW},
-                {"disctools",      AppMode::DiscTools},
-                {"djmixer",        AppMode::DJMixer},
-                {"karaoke",        AppMode::Karaoke},
                 {"modtracker",     AppMode::ModTracker},
                 {"musicnotation",  AppMode::MusicNotation},
                 {"middleware",     AppMode::Middleware},
+                {"djmixer",        AppMode::DJMixer},
+                {"karaoke",        AppMode::Karaoke},
+                {"disctools",      AppMode::DiscTools},
                 {"labelmaker",     AppMode::LabelMaker},
                 {"converter",      AppMode::Converter},
+                {"streaming",      AppMode::Streaming},
                 {"capture",        AppMode::Capture},
                 {"library",        AppMode::Library},
-                {"streaming",      AppMode::Streaming},
                 // Legacy / compat aliases
                 {"discburner",     AppMode::DiscTools},
+                {"mediasuite",     AppMode::MediaSuite},
                 {"screenrecorder", AppMode::ScreenRecorder},
                 {"webcam",         AppMode::WebcamRecorder},
                 {"dvbtuner",       AppMode::DVBTuner},
@@ -209,7 +237,7 @@ namespace Aegis {
                 {"audiorecorder",  AppMode::AudioRecorder},
                 {"streamingstudio",AppMode::StreamingStudio},
             };
-            return modeMap.value(modeStr.toLower(), AppMode::Launcher);
+            return modeMap.value(modeStr.toLower(), AppMode::MediaSuite);
         }
     };
 
@@ -217,6 +245,12 @@ namespace Aegis {
     // Application Initializer
     // ============================================================================
 
+    /**
+     * @brief Performs global application setup.
+     *
+     * This static class handles all one-time initialization tasks that are
+     * independent of the specific mode being launched.
+     */
     class ApplicationInitializer {
     public:
         static void setup(QApplication& app) {
@@ -251,54 +285,69 @@ namespace Aegis {
 
             // Create directories
             createDirectories();
+
+            // ── Internationalisation ──────────────────────────────────────────
+            // Load the translation that matches either the saved language setting
+            // or the system locale.  Falls back silently to English if no .qm
+            // file is found.
+            auto& i18n = I18nManager::instance();
+            i18n.setTranslationsPath(QStringLiteral(":/translations"));
+            const QString savedLang =
+                ConfigManager::instance().get<QString>(
+                    "ui/language",
+                    QLocale::system().name().section(QLatin1Char('_'), 0, 0));
+            if (!savedLang.isEmpty() && savedLang != QLatin1String("en"))
+                i18n.switchLanguage(savedLang);
         }
 
     private:
         static void setupLogging() {
-            QString logPath = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
-            + "/aegis.log";
+            // Install a custom message handler to log to both console and a file.
+            QString logPath = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/aegis.log";
 
-                qInstallMessageHandler([](QtMsgType type, const QMessageLogContext& context,
-                                          const QString& msg) {
-                    QByteArray localMsg = msg.toLocal8Bit();
-                    QString level;
+            qInstallMessageHandler([](QtMsgType type, const QMessageLogContext& context, const QString& msg) {
+                QByteArray localMsg = msg.toLocal8Bit();
+                QString level;
 
-                    switch (type) {
-                        case QtDebugMsg: level = "DEBUG"; break;
-                        case QtInfoMsg: level = "INFO"; break;
-                        case QtWarningMsg: level = "WARNING"; break;
-                        case QtCriticalMsg: level = "CRITICAL"; break;
-                        case QtFatalMsg: level = "FATAL"; abort();
+                switch (type) {
+                    case QtDebugMsg: level = "DEBUG"; break;
+                    case QtInfoMsg: level = "INFO"; break;
+                    case QtWarningMsg: level = "WARNING"; break;
+                    case QtCriticalMsg: level = "CRITICAL"; break;
+                    case QtFatalMsg: level = "FATAL"; abort();
+                }
+
+                // Console output
+                fprintf(stderr, "%s: %s (%s:%u)\n",
+                        level.toLocal8Bit().constData(),
+                        localMsg.constData(),
+                        context.file ? context.file : "unknown",
+                        context.line);
+
+                // File output
+                static QFile logFile(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/aegis.log");
+
+                // Open the file only once, when the first log message arrives.
+                if (!logFile.isOpen()) {
+                    // Attempt to open in Append mode, creating the file if it doesn't exist.
+                    if (!logFile.open(QIODevice::Append | QIODevice::Text)) {
+                        // If opening fails, print an error to stderr. This is a fallback.
+                        fprintf(stderr, "Failed to open log file: %s\n", logFile.errorString().toLocal8Bit().constData());
+                        return; // Skip file logging for this message.
                     }
+                }
 
-                    // Console output
-                    fprintf(stderr, "%s: %s (%s:%u)\n",
-                            level.toLocal8Bit().constData(),
-                            localMsg.constData(),
-                            context.file ? context.file : "unknown",
-                            context.line);
-
-                    // File output
-                    static QFile logFile(QStandardPaths::writableLocation(
-                        QStandardPaths::AppLocalDataLocation) + "/aegis.log");
-
-                    if (!logFile.isOpen()) {
-                        // FIX: Check return value
-                        if (!logFile.open(QIODevice::Append | QIODevice::Text)) {
-                            // Handle error if needed
-                        }
-                    }
-
-                    if (logFile.isOpen()) {
-                        QTextStream stream(&logFile);
-                        stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
-                        << " [" << level << "] " << msg << "\n";
-                        stream.flush();
-                    }
-                                          });
+                if (logFile.isOpen()) {
+                    QTextStream stream(&logFile);
+                    stream << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
+                    << " [" << level << "] " << msg << "\n";
+                    stream.flush();
+                }
+            });
         }
 
         static void createDirectories() {
+            // Ensure required application data directories exist.
             QStringList dirs = {
                 QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation),
                 QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/captures",
@@ -317,6 +366,40 @@ namespace Aegis {
     // Main Application Class
     // ============================================================================
 
+    /**
+     * @brief Core application class that orchestrates the entire lifecycle.
+     *
+     * This class creates the QApplication, parses arguments, initializes
+     * backends, sets up the QML engine, and runs the main event loop.
+     */
+
+    // ============================================================================
+    // HelpBridge — exposes AegisHelpMenu functionality to QML
+    // ============================================================================
+    /**
+     * @brief Thin QObject that lets QML invoke C++ help/about dialogs.
+     *
+     * Registered as a context property "helpBridge" on the QML engine.
+     */
+    class HelpBridge : public QObject {
+        Q_OBJECT
+    public:
+        explicit HelpBridge(QWidget* parent = nullptr)
+            : QObject(nullptr)
+            , m_menu(parent, AboutData::defaultData())
+        {}
+
+    public slots:
+        void showHelpContents()  { m_menu.showHelpContents(); }
+        void showAboutDialog()   { m_menu.showAboutApplication(); }
+        void showAboutQt()       { m_menu.showAboutQt(); }
+        void reportBug()         { m_menu.reportBug(); }
+        void switchLanguage()    { m_menu.switchLanguage(); }
+
+    private:
+        AegisHelpMenu m_menu;
+    };
+
     class AegisApplication : public QObject {
         Q_OBJECT
 
@@ -329,6 +412,7 @@ namespace Aegis {
             // values in media headers; without it mpv_create() fails immediately.
             // This must be called after QApplication is constructed, not before.
             std::setlocale(LC_NUMERIC, "C");
+            m_helpBridge = std::make_unique<HelpBridge>(nullptr);
         }
 
         int run() {
@@ -377,8 +461,9 @@ namespace Aegis {
         bool handleSingleInstance(const AppContext& context) {
             auto& ipc = IpcManager::instance();
 
+            // If this is not the primary instance and there are files to open,
+            // send them to the primary instance and exit.
             if (!ipc.isPrimary() && !context.files.isEmpty()) {
-                // Send files to primary instance
                 IpcFileOpenMessage msg;
                 msg.files = context.files;
                 msg.suggestedMode = modeToString(context.mode);
@@ -389,7 +474,7 @@ namespace Aegis {
                 }
             }
 
-            // Connect IPC signals
+            // Connect IPC signals to handle file open requests from other instances.
             connect(&ipc, &IpcManager::fileOpenRequested,
                     this, &AegisApplication::handleFileOpenRequest);
 
@@ -399,47 +484,37 @@ namespace Aegis {
         bool initializeCore() {
             try {
                 // Create MPV backend
-                auto mpvResult = BackendFactory<MpvBackend>::create();
-                if (mpvResult.isError()) {
-                    m_logger.error("Failed to create MPV backend: " + mpvResult.error());
-                    return false;
-                }
-
-                // For now, use same backend for video (simplified)
-                auto videoResult = BackendFactory<MpvBackend>::create();
-                if (videoResult.isError()) {
-                    m_logger.error("Failed to create video backend: " + videoResult.error());
-                    return false;
-                }
-
-                // Create audio engine
-                auto audioEngine = std::make_unique<AudioEngine>();
-
-                // Extract from Result using rvalue overload (value() && returns T&&)
-                auto mpvPtr = std::move(mpvResult).value();
-                auto vidPtr = std::move(videoResult).value();
+                auto mpvPtr  = std::make_unique<MpvBackend>();
+                auto vidPtr  = std::make_unique<MpvBackend>();
+                auto audioEngine = std::make_unique<Aegis::AudioEngine>();
 
                 // Adapter: MpvBackend implements IAudioBackend but NOT IVideoBackend.
                 // Wrap it as IVideoBackend for the video slot.
+                /**
+                 * @brief Adapter class to make MpvBackend conform to the IVideoBackend interface.
+                 */
                 class VideoBackendFromMpv final : public IVideoBackend {
                     std::unique_ptr<MpvBackend> m;
                 public:
                     explicit VideoBackendFromMpv(std::unique_ptr<MpvBackend> b) : m(std::move(b)) {}
-                    Result<void> load(const QUrl& u) override { return m->load(u.toLocalFile()); }
-                    Result<void> play()  override { return m->play(); }
-                    Result<void> pause() override { return m->pause(); }
-                    Result<void> stop()  override { return m->stop(); }
-                    Result<void> seek(double p) override { return m->seek(p); }
+                    Result<void> load(const QUrl& u) override { return m->open(u) ? Result<void>::success() : Result<void>::error("MpvBackend::open failed"); }
+                    Result<void> play()  override { m->play();  return Result<void>::success(); }
+                    Result<void> pause() override { m->pause(); return Result<void>::success(); }
+                    Result<void> stop()  override { m->stop();  return Result<void>::success(); }
+                    Result<void> seek(double p) override { m->seek(static_cast<qint64>(p * 1000.0)); return Result<void>::success(); }
                     QImage currentFrame() const override { return {}; }
                     QSize  videoSize()    const override { return {}; }
                     bool   hasVideo()     const override { return m->hasVideo(); }
                 };
 
                 // Adapter: AudioEngine does not inherit IAudioEngine; wrap it.
+                /**
+                 * @brief Adapter class to make AudioEngine conform to the IAudioEngine interface.
+                 */
                 class AudioEngineAdapter final : public IAudioEngine {
-                    AudioEngine* m;
+                    Aegis::AudioEngine* m;
                 public:
-                    explicit AudioEngineAdapter(AudioEngine* e) : m(e) {}
+                    explicit AudioEngineAdapter(Aegis::AudioEngine* e) : m(e) {}
                     Result<void> processBuffer(float* buf, int frames, int sr, int ch) override {
                         m->processBuffer(buf, frames, sr, ch);
                         return Result<void>::success();
@@ -453,18 +528,19 @@ namespace Aegis {
                     double bpm()     const override { return 0.0; }
                 };
 
-                AudioEngine* rawEngine = audioEngine.get();
+                Aegis::AudioEngine* rawEngine = audioEngine.get();
+                m_audioEngine = rawEngine;  // cache for use in initializeQml
                 std::unique_ptr<IAudioBackend> audioBackend(std::move(mpvPtr));
                 std::unique_ptr<IVideoBackend> videoBackend =
-                    std::make_unique<VideoBackendFromMpv>(std::move(vidPtr));
+                std::make_unique<VideoBackendFromMpv>(std::move(vidPtr));
                 std::unique_ptr<IAudioEngine> audioEngineIface =
-                    std::make_unique<AudioEngineAdapter>(rawEngine);
+                std::make_unique<AudioEngineAdapter>(rawEngine);
                 audioEngine.release(); // ownership transferred to QObject parent tree
 
                 m_core = std::make_unique<Core>(
                     std::move(audioBackend),
-                    std::move(videoBackend),
-                    std::move(audioEngineIface)
+                                                std::move(videoBackend),
+                                                std::move(audioEngineIface)
                 );
                 rawEngine->setParent(m_core.get());
 
@@ -487,26 +563,87 @@ namespace Aegis {
         bool initializeQml(const AppContext& context) {
             m_engine = std::make_unique<QQmlApplicationEngine>();
 
-            // Register types
+            // Register C++ types with QML
             qmlRegisterType<Core>("Aegis.Core", 1, 0, "Core");
             qmlRegisterUncreatableType<PlaybackState>("Aegis.Core", 1, 0, "PlaybackState",
                                                       "Enum type");
 
-            // Set context properties
+            // Set context properties, making C++ objects and data available to QML.
             QQmlContext* ctx = m_engine->rootContext();
             ctx->setContextProperty("aegisVersion", AEGIS_VERSION);
             ctx->setContextProperty("core", m_core.get());
             ctx->setContextProperty("config", &ConfigManager::instance());
-            // FIX: These fields exist in AppContext now
             ctx->setContextProperty("commandLineFiles", QVariant::fromValue(context.files));
             ctx->setContextProperty("commandLineOptions", context.options);
+            // Expose i18n manager to QML for language switching from UI
+            ctx->setContextProperty("i18nManager", &I18nManager::instance());
+            // Expose help bridge (About/Help dialogs) to QML
+            ctx->setContextProperty("helpBridge", m_helpBridge.get());
 
-            // Load appropriate QML
+            // ── Per-mode backend objects ────────────────────────────────────
+            // Create all backend objects that are needed. Some are created for
+            // all modes (AudioEditor, Library, etc.) so that main.qml's startup
+            // health-checks succeed regardless of which mode launched.
+
+            // Shared backends (needed by main.qml's typeof checks always)
+            m_library    = std::make_unique<Aegis::Library>(
+                QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                    + "/library.db");
+            m_platform   = std::make_unique<Platform>();
+            m_cdBurner   = std::make_unique<Aegis::CDBurner>();
+            m_videoEditor= std::make_unique<Aegis::VideoEditor>();
+            m_converter  = m_audioEngine
+                ? std::make_unique<Aegis::Converter>(m_audioEngine)
+                : nullptr;
+            m_middleware = m_audioEngine
+                ? std::make_unique<Aegis::AudioMiddleware>(m_audioEngine)
+                : nullptr;
+
+            // AudioEditor — registered as both "AudioEditor" (for main.qml) and
+            // "AudioEngine" (for ui_audioeditor.qml which uses that name)
+            m_audioEditor = std::make_unique<Aegis::AudioEditor>(m_audioEngine);
+            ctx->setContextProperty("AudioEditor", m_audioEditor.get());
+            ctx->setContextProperty("AudioEngine", m_audioEditor.get());
+
+            // DJ Mixer
+            m_djMixer = std::make_unique<Aegis::DJMixer>();
+            ctx->setContextProperty("DJ", m_djMixer.get());
+
+            // Disc / Burning / Label
+            m_labelMaker = std::make_unique<Aegis::DiscLabelMaker>();
+            ctx->setContextProperty("CDBurner",   m_cdBurner.get());
+            ctx->setContextProperty("Disc",        m_cdBurner.get());
+            ctx->setContextProperty("LabelMaker",  m_labelMaker.get());
+
+            // Video editor
+            ctx->setContextProperty("VideoEditor", m_videoEditor.get());
+
+            // Library / Platform
+            ctx->setContextProperty("Library",     m_library.get());
+            ctx->setContextProperty("Platform",    m_platform.get());
+
+            // Converter / Middleware
+            if (m_converter)  ctx->setContextProperty("Converter",       m_converter.get());
+            if (m_middleware) ctx->setContextProperty("AudioMiddleware",  m_middleware.get());
+
+            // Karaoke — needs AudioEngine + an MpvBackend; create a dedicated one
+            if (m_audioEngine) {
+                auto karaokeBackend = std::make_unique<MpvBackend>();
+                m_karaoke = std::make_unique<Aegis::KaraokeController>(
+                    m_audioEngine, karaokeBackend.release());
+                ctx->setContextProperty("Karaoke", m_karaoke.get());
+            }
+
+            // Audio raw engine (some QML checks typeof Audio)
+            if (m_audioEngine)
+                ctx->setContextProperty("Audio", m_audioEngine);
+
+            // Load appropriate QML based on the selected mode.
             QString qmlPath = getQmlPath(context.mode);
             QUrl qmlUrl(qmlPath);
 
             if (!qmlUrl.isValid() || qmlUrl.scheme().isEmpty()) {
-                qmlUrl = QUrl("qrc:/qml/MediaSuite/Main.qml");
+                qmlUrl = QUrl("qrc:/qml/main.qml");
             }
 
             m_engine->load(qmlUrl);
@@ -516,7 +653,7 @@ namespace Aegis {
                 return false;
             }
 
-            // Handle initial files
+            // Handle initial files passed on the command line.
             if (!context.files.isEmpty()) {
                 for (const QString& file : context.files) {
                     m_core->enqueue(QUrl::fromLocalFile(file));
@@ -531,6 +668,7 @@ namespace Aegis {
         }
 
         QString getQmlPath(AppMode mode) const {
+            // Map each application mode to its corresponding QML resource file.
             static const QHash<AppMode, QString> qmlMap = {
                 {AppMode::Launcher,        "qrc:/qml/ui_launcher.qml"},
                 {AppMode::MediaSuite,      "qrc:/qml/main.qml"},
@@ -558,11 +696,11 @@ namespace Aegis {
                 {AppMode::AudioRecorder,   "qrc:/qml/ui_screencapture.qml"},
                 {AppMode::StreamingStudio, "qrc:/qml/ui_player.qml"},
             };
-            return qmlMap.value(mode, "qrc:/qml/ui_launcher.qml");
+            return qmlMap.value(mode, "qrc:/qml/main.qml");
         }
 
         void setupTray() {
-            // Use the SVG app icon for the tray; fall back to the window icon if unavailable.
+            // Create the system tray icon and menu.
             QIcon trayIcon = QIcon(":/assets/icons/app_icon.svg");
             if (trayIcon.isNull()) trayIcon = m_app.windowIcon();
             m_tray = std::make_unique<QSystemTrayIcon>(trayIcon, &m_app);
@@ -613,15 +751,21 @@ namespace Aegis {
         }
 
         void showHelp() {
+            // CLI help (--help flag): print to stdout.
             QTextStream out(stdout);
             out << "Aegis Multimedia Suite v" << AEGIS_VERSION << "\n\n";
             out << "Usage: aegis [OPTIONS] [FILES...]\n\n";
             out << "Options:\n";
-            out << "  --mode=<name>         Start in specific mode\n";
+            out << "  --mode=<n>            Start in specific mode\n";
+            out << "                        (launcher|mediaplayer|audioeditor|\n";
+            out << "                         videoeditor|daw|djmixer|karaoke|\n";
+            out << "                         modtracker|musicnotation|middleware|\n";
+            out << "                         disctools|labelmaker|converter|\n";
+            out << "                         capture|streaming)\n";
             out << "  --minimized           Start minimized to tray\n";
             out << "  --no-tray             Disable system tray\n";
-            out << "  --style=<name>        Qt style (fusion, windows, etc.)\n";
-            out << "  --theme=<name>        UI theme (dark, light, system)\n";
+            out << "  --style=<n>           Qt style (fusion, windows, etc.)\n";
+            out << "  --theme=<n>           UI theme (dark, light, system)\n";
             out << "  --geometry=WxH        Window size\n";
             out << "  --list-sources        List capture sources\n";
             out << "  --source=<id>         Select capture source\n";
@@ -629,6 +773,18 @@ namespace Aegis {
             out << "  --output=<file>       Output file path\n";
             out << "  -h, --help            Show this help\n";
             out << "  -v, --version         Show version\n";
+            out << "\nKeyboard shortcuts (in-app):\n";
+            out << "  F1                    Open user handbook\n";
+            out << "  Shift+F1              WhatsThis mode\n";
+            out << "  Ctrl+L                Return to launcher\n";
+            out << "  Ctrl+1..9             Switch application module\n";
+        }
+
+        /// Show the GUI About dialog (called from tray or QML via help menu).
+        void showAboutDialog() {
+            auto aboutData = AboutData::defaultData();
+            AegisAboutDialog dlg(aboutData);
+            dlg.exec();
         }
 
         void showVersion() {
@@ -638,6 +794,7 @@ namespace Aegis {
         }
 
         static QString modeToString(AppMode mode) {
+            // Inverse mapping of stringToMode, converting an AppMode enum to a string.
             switch (mode) {
                 case AppMode::Launcher:        return "launcher";
                 case AppMode::MediaSuite:      return "mediasuite";
@@ -671,6 +828,20 @@ namespace Aegis {
         std::unique_ptr<QQmlApplicationEngine> m_engine;
         std::unique_ptr<Core> m_core;
         std::unique_ptr<QSystemTrayIcon> m_tray;
+        std::unique_ptr<HelpBridge> m_helpBridge;
+        Aegis::AudioEngine* m_audioEngine = nullptr;  // owned by m_core, pointer cached here
+
+        // Per-mode backend objects (created in initializeQml, owned here)
+        std::unique_ptr<Aegis::AudioEditor>       m_audioEditor;
+        std::unique_ptr<Aegis::DJMixer>           m_djMixer;
+        std::unique_ptr<Aegis::CDBurner>          m_cdBurner;
+        std::unique_ptr<Aegis::DiscLabelMaker>    m_labelMaker;
+        std::unique_ptr<Aegis::VideoEditor>       m_videoEditor;
+        std::unique_ptr<Aegis::KaraokeController> m_karaoke;
+        std::unique_ptr<Aegis::Converter>         m_converter;
+        std::unique_ptr<Aegis::AudioMiddleware>   m_middleware;
+        std::unique_ptr<Aegis::Library>           m_library;
+        std::unique_ptr<Platform>                 m_platform;  // Platform is global namespace
         Logger m_logger;
     };
 
@@ -714,7 +885,7 @@ int main(int argc, char* argv[]) {
             bin = bin.mid(6);
 
         static const QHash<QString, QString> basenameMap = {
-            {"aegis",         "launcher"},
+            {"aegis",         "mediasuite"},
             {"launcher",      "launcher"},
             {"mediaplayer",   "mediaplayer"},
             {"audioeditor",   "audioeditor"},
@@ -735,6 +906,7 @@ int main(int argc, char* argv[]) {
 
         QString modeName = basenameMap.value(bin, "launcher");
 
+        // Patch the argument list by inserting a --mode option before the original arguments.
         patchedStorage.push_back(std::string(argv[0]));
         patchedStorage.push_back(("--mode=" + modeName).toStdString());
         for (int i = 1; i < argc; ++i)
