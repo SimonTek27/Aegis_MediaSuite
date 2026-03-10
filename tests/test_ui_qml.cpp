@@ -203,4 +203,29 @@ private slots:
 
 };
 
+// Definitions for TestQmlComponentLoading constructor/destructor
+TestQmlComponentLoading::TestQmlComponentLoading() = default;
+TestQmlComponentLoading::~TestQmlComponentLoading() = default;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Composite runner  (QGuiApplication required by QtQuick / QQmlEngine)
+// ─────────────────────────────────────────────────────────────────────────────
+int main(int argc, char** argv) {
+    QGuiApplication app(argc, argv);
+    int result = 0;
+    {
+        TestQmlUtilFunctions t;
+        result |= QTest::qExec(&t, argc, argv);
+    }
+    {
+        TestSettingsPersistence t;
+        result |= QTest::qExec(&t, argc, argv);
+    }
+    {
+        TestQmlComponentLoading t;
+        result |= QTest::qExec(&t, argc, argv);
+    }
+    return result;
+}
+
 #include "test_ui_qml.moc"

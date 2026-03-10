@@ -2006,10 +2006,10 @@ ApplicationWindow {
 
     // Triangle Component (for playhead)
     component Triangle: Shape {
-        property color color: "white"
+        property color fillColor: "white"
 
         ShapePath {
-            fillColor: parent.color
+            fillColor: parent.fillColor
             strokeWidth: 0
             startX: 0
             startY: 0

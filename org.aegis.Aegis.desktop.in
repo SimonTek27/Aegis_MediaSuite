@@ -1,14 +1,15 @@
+#!/usr/bin/env xdg-open
 [Desktop Entry]
 Type=Application
 Version=1.5
-Name=Aegis Media Player
-GenericName=Media Player
-Comment=Audio player with CD ripping and DJ mixing features
+Name=Aegis Media Suite
+GenericName=Multimedia Suite
+Comment=Unified multimedia workstation: player, editor, DJ mixer, streaming client and disc burner
 Exec=aegis %U
 Icon=aegis
 Terminal=false
-Categories=AudioVideo;Player;Qt;KDE;
-MimeType=audio/mpeg;audio/x-wav;audio/flac;audio/ogg;audio/x-flac;audio/x-vorbis+ogg;
+Categories=AudioVideo;Player;Recorder;AudioVideoEditing;Qt;KDE;
+MimeType=audio/mpeg;audio/x-wav;audio/flac;audio/ogg;audio/x-flac;audio/x-vorbis+ogg;video/mp4;video/x-matroska;video/webm;video/quicktime;video/avi;audio/mp4;audio/aac;audio/opus;audio/x-opus+ogg;
+X-GNOME-FullName=Aegis Multimedia Suite
 StartupNotify=true
-X-KDE-StartupNotify=true
 X-KDE-Protocols=file,http,https

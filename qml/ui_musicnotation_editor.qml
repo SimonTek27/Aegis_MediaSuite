@@ -1,17 +1,22 @@
-// ui_ui_musicnotation_editor.qml - Music notation editor
+// ui_musicnotation_editor.qml - Music notation editor
 
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Shapes
 
-// Symbol font loader for musical symbols
-FontLoader {
-    id: bravuraFont
-    source: "qrc:/fonts/Bravura.otf"
-}
+Rectangle {
+    id: root
+    anchors.fill: parent
+    color: palette.window
 
-// Accidental symbols component
+    // Symbol font loader for musical symbols
+    FontLoader {
+        id: bravuraFont
+        source: "qrc:/fonts/Bravura.otf"
+    }
+
+    // Accidental symbols component
 component AccidentalSymbol: Text {
     property int accidental: 0  // 0=none, 1=sharp, 2=flat, 3=natural, 4=doubleSharp, 5=doubleFlat
 
@@ -142,7 +147,7 @@ component SlurveCurve: Shape {
     property real startY: 0
     property real endX: 100
     property real endY: 0
-    property real height: 20
+    property real curveHeight: 20
     property bool above: true
 
     ShapePath {
@@ -154,14 +159,14 @@ component SlurveCurve: Shape {
             x: startX
             y: startY
             controlX: (startX + endX) / 2
-            controlY: above ? Math.min(startY, endY) - height : Math.max(startY, endY) + height
+            controlY: above ? Math.min(startY, endY) - curveHeight : Math.max(startY, endY) + curveHeight
         }
 
         PathQuad {
             x: endX
             y: endY
             controlX: (startX + endX) / 2
-            controlY: above ? Math.min(startY, endY) - height : Math.max(startY, endY) + height
+            controlY: above ? Math.min(startY, endY) - curveHeight : Math.max(startY, endY) + curveHeight
         }
     }
 }
@@ -427,3 +432,4 @@ component PositionIndicator: Rectangle {
         return mins + ":" + (secs < 10 ? "0" : "") + secs + "." + (ms < 100 ? "0" : "") + (ms < 10 ? "0" : "") + ms
     }
 }
+} // end root Rectangle

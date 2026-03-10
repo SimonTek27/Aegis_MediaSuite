@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Test Quick Qml Widgets Multimedia Sql OpenGLWidgets PrintSupport DBus)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Test Quick Qml Widgets Multimedia Sql OpenGLWidgets PrintSupport DBus LinguistTools Svg)
 find_package(KF6Solid REQUIRED)
 
 # Collect all .cpp/.h sources from src to ensure implementations are built into aegis_core
@@ -50,6 +50,7 @@ target_link_libraries(aegis_core
         Qt6::DBus
         Qt6::Qml
         Qt6::Quick
+        Qt6::Svg
         KF6::Solid
 )
 
@@ -94,6 +95,20 @@ if(PIPEWIRE_LIB)
     target_link_libraries(aegis_core PRIVATE ${PIPEWIRE_LIB})
 endif()
 
+# ─── Internationalization (i18n) ────────────────────────────────────────────
+# qt6_add_translations must be called AFTER the executable target exists.
+# We compile .ts → .qm with qt6_create_translation (Qt6 Linguist macro) and
+# embed the resulting .qm files directly via qt_add_resources on the target.
+set(AEGIS_TRANSLATION_SOURCES
+    ${CMAKE_SOURCE_DIR}/translations/aegis-mediasuite_it.ts
+    ${CMAKE_SOURCE_DIR}/translations/aegis-mediasuite_de.ts
+    ${CMAKE_SOURCE_DIR}/translations/aegis-mediasuite_fr.ts
+    ${CMAKE_SOURCE_DIR}/translations/aegis-mediasuite_pt_BR.ts
+    ${CMAKE_SOURCE_DIR}/translations/aegis-mediasuite_zh_CN.ts
+    ${CMAKE_SOURCE_DIR}/translations/aegis-mediasuite_ru.ts
+    ${CMAKE_SOURCE_DIR}/translations/aegis-mediasuite_es.ts
+)
+
 qt6_add_resources(AEGIS_RESOURCES resources.qrc)
 
 # ─── Single executable ───────────────────────────────────────────────────────
@@ -101,44 +116,46 @@ qt6_add_resources(AEGIS_RESOURCES resources.qrc)
 #   1. --mode=<n> command-line flag  (always wins)
 #   2. argv[0] basename with the "aegis-" prefix stripped
 #      e.g.  aegis-mediaplayer  →  mediaplayer
-# Install symlinks (see below) to expose per-mode entry points.
+# Per-mode stub executables (see below) expose each mode as its own binary.
 add_executable(aegis src/main.cpp ${AEGIS_RESOURCES})
 target_link_libraries(aegis PRIVATE aegis_core Qt6::Qml Qt6::Quick Qt6::Widgets Qt6::Gui)
 target_precompile_headers(aegis REUSE_FROM aegis_core)
 
-# ─── Install: binary + per-mode symlinks ─────────────────────────────────────
-install(TARGETS aegis RUNTIME DESTINATION bin)
-
-set(AEGIS_MODE_SYMLINKS
-    aegis-launcher
-    aegis-mediaplayer
-    aegis-audioeditor
-    aegis-videoeditor
-    aegis-daw
-    aegis-disctools
-    aegis-djmixer
-    aegis-karaoke
-    aegis-modtracker
-    aegis-musicnotation
-    aegis-middleware
-    aegis-labelmaker
-    aegis-converter
-    aegis-capture
-    aegis-library
-    aegis-streaming
+# ─── Translations: compile .ts → .qm and embed into the executable ──────────
+# qt6_add_translations must be called after the target is defined.
+qt6_add_translations(aegis
+    TS_FILES ${AEGIS_TRANSLATION_SOURCES}
+    LUPDATE_OPTIONS -no-obsolete
 )
 
-foreach(SYMLINK ${AEGIS_MODE_SYMLINKS})
-    install(CODE "
-        set(link \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/${SYMLINK}\")
-        if(NOT EXISTS \"\${link}\")
-            execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink aegis \"\${link}\")
-        endif()
-    ")
+# ─── Install: main binary ────────────────────────────────────────────────────
+install(TARGETS aegis RUNTIME DESTINATION bin)
+
+# Per-app symlinks
+# The aegis binary detects mode from argv[0]: aegis-mediaplayer -> mediaplayer mode.
+set(AEGIS_APP_MODES
+    launcher mediaplayer audioeditor videoeditor daw modtracker middleware
+    djmixer karaoke disctools labelmaker converter streaming capture library
+)
+
+foreach(mode IN LISTS AEGIS_APP_MODES)
+    set(_sym "aegis-${mode}")
+    add_custom_command(TARGET aegis POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+            "$<TARGET_FILE_NAME:aegis>"
+            "$<TARGET_FILE_DIR:aegis>/${_sym}"
+        COMMENT "Symlink: ${_sym} -> aegis"
+        VERBATIM
+    )
 endforeach()
 
-enable_testing()
-add_subdirectory(tests)
+# Install-tree symlinks (cmake --install)
+foreach(mode IN LISTS AEGIS_APP_MODES)
+    install(CODE
+        "execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink aegis \
+            \${CMAKE_INSTALL_PREFIX}/bin/aegis-${mode})"
+    )
+endforeach()
 
 if(TAGLIB_LIB)
     target_link_libraries(aegis_core PRIVATE ${TAGLIB_LIB})
@@ -149,6 +166,9 @@ endif()
 if(SAMPLERATE_LIB)
     target_link_libraries(aegis_core PRIVATE ${SAMPLERATE_LIB})
 endif()
+
+enable_testing()
+add_subdirectory(tests)
 
 # Optional: GStreamer support for capture
 find_package(PkgConfig QUIET)
@@ -188,3 +208,24 @@ if(PkgConfig_FOUND)
         message(STATUS "libburn/libisofs NOT found — disc burning compiled in stub mode")
     endif()
 endif()
+
+# ─── Install: desktop integration ───────────────────────────────────────────
+configure_file(org.aegis.Aegis.desktop.in org.aegis.Aegis.desktop @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/org.aegis.Aegis.desktop"
+    DESTINATION share/applications)
+
+# App icon (scalable + hicolor sizes)
+install(FILES assets/icons/sc-apps-aegis.svg
+    DESTINATION share/icons/hicolor/scalable/apps
+    RENAME aegis.svg)
+
+# MPRIS D-Bus service
+configure_file(org.mpris.MediaSuite.aegis.service.in
+    org.mpris.MediaSuite.aegis.service @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/org.mpris.MediaSuite.aegis.service"
+    DESTINATION share/dbus-1/services)
+
+# Translations (.qm files built by qt6_add_translations)
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/"
+    DESTINATION share/aegis/translations
+    FILES_MATCHING PATTERN "*.qm")

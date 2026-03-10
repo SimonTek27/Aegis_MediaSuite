@@ -1,5 +1,14 @@
-// main.qml - Aegis Media Suite Core
-
+// main.qml - Aegis Media Suite Core Application Window
+//
+// This is the main application window for the Aegis Media Suite. It acts as a
+// central hub and loader for various application modes (player, editor, burner, etc.).
+// It handles:
+//   - Initialization of C++ backends
+//   - System tray integration
+//   - Application mode switching
+//   - Global keyboard shortcuts
+//   - Persistent settings
+//   - System monitoring (CPU, battery, etc.)
 
 import QtQuick
 import QtQuick.Window
@@ -32,15 +41,15 @@ ApplicationWindow {
     property var platformBackend: null
     property var discBackend: null
     property var burnerBackend: null
-    property var audioEditorBackend: null  // Fixed: Renamed from editorBackend
-    property var videoEditorBackend: null   // Added: Separate video editor
+    property var audioEditorBackend: null
+    property var videoEditorBackend: null
     property var djBackend: null
     property var karaokeBackend: null
     property var labelBackend: null
     property var converterBackend: null
-    property var middlewareBackend: null    // Added: Audio middleware
-    property var modtrackerBackend: null    // Added: Mod tracker backend
-    property var musicBackend: null         // Added: Music notation backend
+    property var middlewareBackend: null
+    property var modtrackerBackend: null
+    property var musicBackend: null
 
     // System state
     property bool backendReady: false
@@ -49,7 +58,7 @@ ApplicationWindow {
     property var failedComponents: []
     property var initializationErrors: []
     property bool criticalError: false
-    property bool projectModified: false    // Added: Track project modifications
+    property bool projectModified: false
 
     // Application state
     property string currentMode: "launcher"
@@ -68,7 +77,7 @@ ApplicationWindow {
     property var recentPlaylists: []
     property var favoriteFiles: []
     property var clipboardData: null
-    property var currentProject: null       // Added: Current project data
+    property var currentProject: null
 
     // System metrics
     property real cpuUsage: 0
@@ -76,7 +85,7 @@ ApplicationWindow {
     property real diskUsage: 0
     property int networkStatus: 0 // 0=offline, 1=slow, 2=good
     property bool lowPowerMode: false
-    property real batteryLevel: 100         // Added: Battery monitoring
+    property real batteryLevel: 100
     property bool isCharging: true
 
     // Media playback state (shared across apps)
@@ -208,28 +217,15 @@ ApplicationWindow {
         "converter": "qrc:/qml/ui_converter.qml",
         "middleware": "qrc:/qml/ui_middleware.qml",
         "modtracker": "qrc:/qml/ui_modtracker.qml",
-        "musicnotation": "qrc:/qml/ui_musicnotation_editor.qml"
+        "musicnotation": "qrc:/qml/ui_musicnotation_editor.qml",
+        "daw": "qrc:/qml/ui_daw.qml",
+        "capture": "qrc:/qml/ui_screencapture.qml",
+        "streaming": "qrc:/qml/ui_player.qml"
     })
-
-    Loader {
-        id: editorLoader
-        anchors.fill: parent
-        source: editorPages[currentMode] ? editorPages[currentMode] : "qrc:/qml/ui_launcher.qml"
-
-        // When the launcher emits appLaunchRequested, switch the active mode.
-        onLoaded: {
-            if (item && typeof item.appLaunchRequested !== "undefined") {
-                item.appLaunchRequested.connect(function(mode) {
-                    rootWindow.switchMode(mode)
-                })
-            }
-        }
-    }
 
     // ============================================
     // 3. INITIALIZATION SYSTEM
     // ============================================
-
 
     Component.onCompleted: {
         console.log("🚀 Aegis Media Suite v2.1.1 Initializing...")
@@ -288,7 +284,7 @@ ApplicationWindow {
         }
 
         if (globalSettings.startMinimized) {
-            Qt.callLater(() => rootWindow.visibility = Window.Minimized)
+            Qt.callLater(function() { rootWindow.visibility = Window.Minimized })
         }
     }
 
@@ -403,112 +399,112 @@ ApplicationWindow {
         var initializationSteps = [
             {
                 name: "Core Engine",
-                check: () => typeof Core !== 'undefined',
-                assign: (val) => coreBackend = val,
+                check: function() { return typeof Core !== 'undefined'; },
+                assign: function(val) { coreBackend = val; },
                 critical: true,
                 timeout: 5000,
                 dependencies: []
             },
             {
                 name: "Audio Engine",
-                check: () => typeof Audio !== 'undefined',
-                assign: (val) => audioBackend = val,
+                check: function() { return typeof Audio !== 'undefined'; },
+                assign: function(val) { audioBackend = val; },
                 critical: true,
                 timeout: 3000,
                 dependencies: ["Core Engine"]
             },
             {
                 name: "Library Database",
-                check: () => typeof Library !== 'undefined',
-                assign: (val) => libraryBackend = val,
+                check: function() { return typeof Library !== 'undefined'; },
+                assign: function(val) { libraryBackend = val; },
                 critical: false,
                 timeout: 4000,
                 dependencies: ["Core Engine"]
             },
             {
                 name: "Platform Services",
-                check: () => typeof Platform !== 'undefined',
-                assign: (val) => platformBackend = val,
+                check: function() { return typeof Platform !== 'undefined'; },
+                assign: function(val) { platformBackend = val; },
                 critical: false,
                 timeout: 2000,
                 dependencies: []
             },
             {
                 name: "Disc Services",
-                check: () => typeof Disc !== 'undefined',
-                assign: (val) => discBackend = val,
+                check: function() { return typeof Disc !== 'undefined'; },
+                assign: function(val) { discBackend = val; },
                 critical: false,
                 timeout: 3000,
                 dependencies: []
             },
             {
                 name: "Burner Engine",
-                check: () => typeof CDBurner !== 'undefined',
-                assign: (val) => burnerBackend = val,
+                check: function() { return typeof CDBurner !== 'undefined'; },
+                assign: function(val) { burnerBackend = val; },
                 critical: false,
                 timeout: 5000,
                 dependencies: ["Disc Services"]
             },
             {
                 name: "Audio Editor Engine",
-                check: () => typeof AudioEditor !== 'undefined',
-                assign: (val) => audioEditorBackend = val,
+                check: function() { return typeof AudioEditor !== 'undefined'; },
+                assign: function(val) { audioEditorBackend = val; },
                 critical: false,
                 timeout: 4000,
                 dependencies: ["Audio Engine"]
             },
             {
                 name: "Video Editor Engine",
-                check: () => typeof VideoEditor !== 'undefined',
-                assign: (val) => videoEditorBackend = val,
+                check: function() { return typeof VideoEditor !== 'undefined'; },
+                assign: function(val) { videoEditorBackend = val; },
                 critical: false,
                 timeout: 4000,
                 dependencies: ["Core Engine"]
             },
             {
                 name: "DJ Engine",
-                check: () => typeof DJ !== 'undefined',
-                assign: (val) => djBackend = val,
+                check: function() { return typeof DJ !== 'undefined'; },
+                assign: function(val) { djBackend = val; },
                 critical: false,
                 timeout: 3000,
                 dependencies: ["Audio Engine"]
             },
             {
                 name: "Karaoke Engine",
-                check: () => typeof Karaoke !== 'undefined',
-                assign: (val) => karaokeBackend = val,
+                check: function() { return typeof Karaoke !== 'undefined'; },
+                assign: function(val) { karaokeBackend = val; },
                 critical: false,
                 timeout: 3000,
                 dependencies: ["Audio Engine"]
             },
             {
                 name: "Label Engine",
-                check: () => typeof LabelMaker !== 'undefined',
-                assign: (val) => labelBackend = val,
+                check: function() { return typeof LabelMaker !== 'undefined'; },
+                assign: function(val) { labelBackend = val; },
                 critical: false,
                 timeout: 2000,
                 dependencies: []
             },
             {
                 name: "Converter Engine",
-                check: () => typeof Converter !== 'undefined',
-                assign: (val) => converterBackend = val,
+                check: function() { return typeof Converter !== 'undefined'; },
+                assign: function(val) { converterBackend = val; },
                 critical: false,
                 timeout: 3000,
                 dependencies: ["Audio Engine"]
             },
             {
                 name: "Middleware Engine",
-                check: () => typeof AudioMiddleware !== 'undefined',
-                assign: (val) => middlewareBackend = val,
+                check: function() { return typeof AudioMiddleware !== 'undefined'; },
+                assign: function(val) { middlewareBackend = val; },
                 critical: false,
                 timeout: 3000,
                 dependencies: ["Audio Engine"]
             },
             {
                 name: "Mod Tracker Engine",
-                check: () => typeof ModTracker !== 'undefined',
-                assign: (val) => modtrackerBackend = val,
+                check: function() { return typeof ModTracker !== 'undefined'; },
+                assign: function(val) { modtrackerBackend = val; },
                 critical: false,
                 timeout: 3000,
                 dependencies: ["Audio Engine"]
@@ -521,6 +517,8 @@ ApplicationWindow {
         criticalError = false
         failedComponents = []
 
+        // QML does not have setTimeout — run all steps via Qt.callLater so
+        // each step yields to the event loop once, keeping the UI responsive.
         function executeStep(index) {
             if (index >= initializationSteps.length) {
                 finalizeInitialization()
@@ -531,93 +529,53 @@ ApplicationWindow {
 
             // Check dependencies
             var depsMissing = step.dependencies.filter(function(dep) {
-                return failedComponents.includes(dep)
+                return failedComponents.indexOf(dep) !== -1;
             })
 
             if (depsMissing.length > 0) {
                 console.warn("⏭️ Skipping", step.name, "due to missing dependencies:", depsMissing.join(", "))
                 failedComponents.push(step.name)
-                setTimeout(() => executeStep(index + 1), 100)
+                Qt.callLater(function() { executeStep(index + 1) })
                 return
             }
 
             initializationStep = index + 1
             connectionStatus = "Loading " + step.name + "..."
 
-            Qt.callLater(function() {
-                var timer = setTimeout(function() {
-                    if (!step.check()) {
-                        var error = {
-                            component: step.name,
-                            message: "Timeout after " + step.timeout + "ms",
-                            critical: step.critical,
-                            timestamp: new Date().toISOString()
-                        }
-
-                        console.warn("⏰", step.name, "timeout")
-                        initializationErrors.push(error)
-
-                        if (step.critical) {
-                            criticalError = true
-                        } else {
-                            failedComponents.push(step.name)
-                        }
-
-                        // Continue to next step
-                        executeStep(index + 1)
+            // QML type objects are available immediately at startup or not at all.
+            if (step.check()) {
+                console.log("✅", step.name, "loaded successfully")
+                try {
+                    step.assign(step.check())
+                    if (step.name === "Audio Engine" && audioBackend) {
+                        applyAudioSettings()
                     }
-                }, step.timeout)
-
-                if (step.check()) {
-                    clearTimeout(timer)
-                    console.log("✅", step.name, "loaded successfully")
-
-                    try {
-                        step.assign(window[step.name.replace(/\s/g, '')] || window[step.name])
-
-                        // Apply settings if available
-                        if (step.name === "Audio Engine" && audioBackend) {
-                            applyAudioSettings()
-                        }
-
-                        // Initialize backend if needed
-                        if (step.name === "Middleware Engine" && middlewareBackend) {
-                            middlewareBackend.initialize()
-                        }
-
-                        // Small delay for visual feedback
-                        setTimeout(() => executeStep(index + 1), 100)
-                    } catch (e) {
-                        console.error("❌ Error assigning", step.name + ":", e)
-                        var error = {
-                            component: step.name,
-                            message: "Assignment error: " + e.message,
-                            critical: step.critical
-                        }
-                        initializationErrors.push(error)
-                        setTimeout(() => executeStep(index + 1), 100)
+                    if (step.name === "Middleware Engine" && middlewareBackend) {
+                        middlewareBackend.initialize()
                     }
-                } else {
-                    clearTimeout(timer)
-                    console.warn("❌", step.name, "not available")
-
-                    var error = {
+                } catch (e) {
+                    console.error("❌ Error assigning", step.name + ":", e)
+                    initializationErrors.push({
                         component: step.name,
-                        message: "Component not found",
+                        message: "Assignment error: " + e.message,
                         critical: step.critical
-                    }
-                    initializationErrors.push(error)
-
-                    if (step.critical) {
-                        criticalError = true
-                        showCriticalError(step.name + " failed to load")
-                    } else {
-                        failedComponents.push(step.name)
-                    }
-
-                    setTimeout(() => executeStep(index + 1), 100)
+                    })
                 }
-            })
+            } else {
+                console.warn("❌", step.name, "not available")
+                initializationErrors.push({
+                    component: step.name,
+                    message: "Component not found",
+                    critical: step.critical
+                })
+                if (step.critical) {
+                    criticalError = true
+                } else {
+                    failedComponents.push(step.name)
+                }
+            }
+
+            Qt.callLater(function() { executeStep(index + 1) })
         }
 
         executeStep(0)
@@ -682,13 +640,13 @@ ApplicationWindow {
             connectionStatus = "Critical error - Some features unavailable"
             showError("System Error",
                       "Critical components failed to load. Some features may be unavailable.\n\n" +
-                      "Failed: " + initializationErrors.filter(e => e.critical).map(e => e.component).join(", "))
+                      "Failed: " + initializationErrors.filter(function(e) { return e.critical; }).map(function(e) { return e.component; }).join(", "))
 
             // Still continue in degraded mode
-            setTimeout(() => {
+            Qt.callLater(function() {
                 backendReady = true
                 startDegradedMode()
-            }, 2000)
+            })
         } else {
             backendReady = true
             connectionStatus = "Ready"
@@ -705,10 +663,15 @@ ApplicationWindow {
     function startDegradedMode() {
         console.log("⚠️ Starting in degraded mode")
 
+        // Mark backend as ready so initializationOverlay hides and the UI is visible
+        backendReady = true
+        connectionStatus = "Running (degraded mode)"
+
         // Start minimal background services
         sessionTimer.start()
         systemMonitorTimer.start()
         loadRecentData()
+        initSystemTray()
 
         // Load launcher
         loadLauncher()
@@ -767,7 +730,7 @@ ApplicationWindow {
         appUsageStats = globalSettings.appUsageCount || {}
 
         // Sort recent files by last access
-        recentFiles.sort((a, b) => new Date(b.lastAccessed) - new Date(a.lastAccessed))
+        recentFiles.sort(function(a, b) { return new Date(b.lastAccessed) - new Date(a.lastAccessed); })
 
         // Limit to 50 items
         if (recentFiles.length > 50) {
@@ -791,7 +754,7 @@ ApplicationWindow {
         }
 
         // Remove if already exists
-        recentFiles = recentFiles.filter(f => f.path !== filePath)
+        recentFiles = recentFiles.filter(function(f) { return f.path !== filePath; })
 
         // Add to beginning
         recentFiles.unshift(fileInfo)
@@ -821,11 +784,11 @@ ApplicationWindow {
         var projectExt = ['aegis', 'aep', 'aegisedit', 'aegisburn', 'aegisconv', 'aegismiddleware']
         var documentExt = ['pdf', 'doc', 'docx', 'txt', 'rtf']
 
-        if (audioExt.includes(ext)) return "audio"
-            if (videoExt.includes(ext)) return "video"
-                if (imageExt.includes(ext)) return "image"
-                    if (projectExt.includes(ext)) return "project"
-                        if (documentExt.includes(ext)) return "document"
+        if (audioExt.indexOf(ext) !== -1) return "audio"
+            if (videoExt.indexOf(ext) !== -1) return "video"
+                if (imageExt.indexOf(ext) !== -1) return "image"
+                    if (projectExt.indexOf(ext) !== -1) return "project"
+                        if (documentExt.indexOf(ext) !== -1) return "document"
                             if (ext === 'iso' || ext === 'nrg' || ext === 'img') return "discimage"
                                 return "file"
     }
@@ -840,58 +803,54 @@ ApplicationWindow {
     // ============================================
 
     // Main mode switching function
-    function switchMode(mode, qmlSource, options = {}) {
+    function switchMode(mode, qmlSource, options) {
+        if (options === undefined) options = {}
         if (currentMode === mode && !options.forceReload) return
 
-        // Resolve source from editorPages when caller doesn't supply it
-        if (!qmlSource) qmlSource = editorPages[mode] || editorPages["launcher"]
+            // Resolve source from editorPages when caller doesn't supply it
+            if (!qmlSource) qmlSource = editorPages[mode] || editorPages["launcher"]
 
-            console.log("🔄 Switching to mode:", mode, "from:", currentMode)
+                console.log("🔄 Switching to mode:", mode, "from:", currentMode)
 
-            // Store previous mode
-            var previousMode = currentMode
+                // Store previous mode
+                var previousMode = currentMode
 
-            // Track app usage
-            trackAppUsage(mode)
+                // Track app usage
+                trackAppUsage(mode)
 
-            // Save to history
-            if (currentMode !== "launcher" && currentMode !== mode) {
-                modeHistory.push({
-                    mode: currentMode,
-                    timestamp: new Date().toISOString(),
-                                 data: options.historyData || {}
-                })
+                // Save to history
+                if (currentMode !== "launcher" && currentMode !== mode) {
+                    modeHistory.push({
+                        mode: currentMode,
+                        timestamp: new Date().toISOString(),
+                                     data: options.historyData || {}
+                    })
 
-                if (modeHistory.length > maxHistorySize) {
-                    modeHistory.shift()
+                    if (modeHistory.length > maxHistorySize) {
+                        modeHistory.shift()
+                    }
                 }
-            }
 
-            // Update settings
-            globalSettings.lastWorkingMode = mode
-            currentMode = mode
+                // Update settings
+                globalSettings.lastWorkingMode = mode
+                currentMode = mode
 
-            // Add to recent apps
-            addToRecentApps(mode)
+                // Add to recent apps
+                addToRecentApps(mode)
 
-            // Transition effect
-            // editorLoader.source is bound to editorPages[currentMode], so setting
-            // currentMode above is enough for editorLoader to reload the right QML.
-            // themeLoader is used only for overlay/context modes not in editorPages.
-            if (editorPages[mode]) {
-                // editorLoader handles it via its source binding — nothing extra needed.
-            } else if (!options.silent) {
-                themeLoader.opacity = 0
-                modeSwitchTimer.modeSource = qmlSource
-                modeSwitchTimer.contextProperties = options.context || {}
-                modeSwitchTimer.previousMode = previousMode
-                modeSwitchTimer.start()
-            } else {
-                themeLoader.setSource(qmlSource, getContextProperties(mode, options.context))
-            }
+                // Transition effect — themeLoader handles all modes.
+                if (!options.silent) {
+                    themeLoader.opacity = 0
+                    modeSwitchTimer.modeSource = qmlSource
+                    modeSwitchTimer.contextProperties = options.context || {}
+                    modeSwitchTimer.previousMode = previousMode
+                    modeSwitchTimer.start()
+                } else {
+                    themeLoader.setSource(qmlSource, getContextProperties(mode, options.context))
+                }
 
-            // Emit mode changed signal
-            modeChanged(mode, previousMode)
+                // Emit mode changed signal
+                modeChanged(mode, previousMode)
     }
 
     function trackAppUsage(appId) {
@@ -908,7 +867,7 @@ ApplicationWindow {
 
     function addToRecentApps(appId) {
         // Remove if already exists
-        recentApps = recentApps.filter(a => a.id !== appId)
+        recentApps = recentApps.filter(function(a) { return a.id !== appId; })
 
         // Add to beginning
         recentApps.unshift({
@@ -935,9 +894,13 @@ ApplicationWindow {
             "karaoke": "Karaoke",
             "djmixer": "DJ Mixer",
             "converter": "Media Converter",
-            "modtracker": "Tracker",
+            "modtracker": "Mod Tracker",
             "middleware": "Audio Middleware",
-            "music": "Music Notation"
+            "music": "Music Notation",
+            "daw": "DAW",
+            "musicnotation": "Music Notation",
+            "capture": "Capture",
+            "streaming": "Streaming"
         }
         return names[appId] || appId
     }
@@ -955,12 +918,17 @@ ApplicationWindow {
             "modtracker": "🎚️",
             "converter": "🔄",
             "middleware": "🔌",
-            "music": "🎼"
+            "music": "🎼",
+            "daw": "🎹",
+            "musicnotation": "🎼",
+            "capture": "📹",
+            "streaming": "📡"
         }
         return icons[appId] || "📱"
     }
 
-    function getContextProperties(mode, additionalContext = {}) {
+    function getContextProperties(mode, additionalContext) {
+        if (additionalContext === undefined) additionalContext = {}
         var baseContext = {
             "coreRef": coreBackend,
             "audioRef": audioBackend,
@@ -1082,6 +1050,56 @@ ApplicationWindow {
         switchMode("modtracker", "qrc:/qml/ui_modtracker.qml")
     }
 
+    function showDAW() {
+        switchMode("daw", "qrc:/qml/ui_daw.qml")
+    }
+
+    function showMusicNotation() {
+        switchMode("musicnotation", "qrc:/qml/ui_musicnotation_editor.qml")
+    }
+
+    function showCapture() {
+        switchMode("capture", "qrc:/qml/ui_screencapture.qml")
+    }
+
+    function showStreaming() {
+        switchMode("streaming", "qrc:/qml/ui_player.qml")
+    }
+
+    function showLibrary() {
+        // Library is a floating overlay/dialog rather than a full-page mode.
+        // Show the library panel within the current mode via a notification-style
+        // mechanism, or switch to a dedicated library view if available.
+        if (libraryBackend) {
+            libraryBackend.openLibraryWindow()
+        } else {
+            showNotification("info", "Media Library",
+                             "Connect a Library backend to browse your media collection.")
+        }
+    }
+
+    function showAbout() {
+        // Delegate to the C++ AegisAboutDialog (KDE-style).
+        // The core C++ side exposes this via context property when available.
+        if (typeof helpBridge !== "undefined" && helpBridge !== null) {
+            helpBridge.showAboutDialog()
+        } else {
+            // Fallback: simple notification when bridge is not wired yet
+            showNotification("info", "About Aegis Media Suite",
+                qsTr("Aegis Media Suite v2.1.1\n" +
+                     "A unified media workstation.\n\n" +
+                     "© 2024–2026 Aegis Project Contributors\n" +
+                     "Released under the GNU GPL v3 licence."))
+        }
+    }
+
+    // Switch the UI language at runtime via I18nManager
+    function switchLanguage(code) {
+        if (typeof i18nManager !== "undefined" && i18nManager !== null) {
+            i18nManager.switchLanguage(code)
+        }
+    }
+
     function goBack() {
         if (modeHistory.length > 0) {
             var lastState = modeHistory.pop()
@@ -1099,6 +1117,10 @@ ApplicationWindow {
                 case "converter": showConverter(); break
                 case "middleware": showMiddleware(); break
                 case "modtracker": showModTracker(); break
+                case "daw": showDAW(); break
+                case "musicnotation": showMusicNotation(); break
+                case "capture": showCapture(); break
+                case "streaming": showStreaming(); break
                 default: showLauncher()
             }
         } else {
@@ -1148,6 +1170,13 @@ ApplicationWindow {
             // Ensure proper anchoring
             if (item && item.anchors) {
                 item.anchors.fill = themeLoader
+            }
+
+            // Connect launcher signal to mode switching
+            if (item && typeof item.appLaunchRequested !== "undefined") {
+                item.appLaunchRequested.connect(function(mode) {
+                    rootWindow.switchMode(mode)
+                })
             }
 
             // Set focus to loaded UI
@@ -1203,7 +1232,7 @@ ApplicationWindow {
                               errorString + "\n\n" +
                               "Source: " + source)
                     // Fallback to launcher
-                    setTimeout(() => showLauncher(), 2000)
+                    Qt.callLater(function() { showLauncher() })
                     break
             }
         }
@@ -1313,7 +1342,7 @@ ApplicationWindow {
             networkStatus = 2 // good
         }
 
-        networkStatusChanged(networkStatus)
+        networkStatusUpdated(networkStatus)
     }
 
     function checkBackendHealth() {
@@ -1418,13 +1447,9 @@ ApplicationWindow {
         console.log("🔍 Checking for updates...")
         // This would check for updates in real implementation
         // For now, simulate update check
-        setTimeout(function() {
-            var hasUpdate = Math.random() > 0.7
-            if (hasUpdate) {
-                showNotification("info", "Update Available",
-                                 "A new version of Aegis Media Suite is available")
-            }
-        }, 2000)
+        Qt.callLater(function() {
+            // Update check placeholder — no real network call yet
+        })
     }
 
     // ============================================
@@ -1773,20 +1798,21 @@ ApplicationWindow {
             width: parent.width
             spacing: 10
 
-            function addNotification(type, title, message, duration = 5000) {
-                var component = Qt.createComponent("Notification.qml")
-                if (component.status === Component.Ready) {
-                    var notification = component.createObject(notificationColumn, {
-                        "notificationType": type,
-                        "notificationTitle": title,
-                        "notificationMessage": message,
-                        "duration": duration
-                    })
-                    notification.destroyOnFinish()
-                } else {
-                    // Fallback simple notification
-                    console.log("📢", title + ":", message)
-                }
+            function addNotification(type, title, message, duration) {
+                if (duration === undefined) duration = 5000
+                    var component = Qt.createComponent("Notification.qml")
+                    if (component.status === Component.Ready) {
+                        var notification = component.createObject(notificationColumn, {
+                            "notificationType": type,
+                            "notificationTitle": title,
+                            "notificationMessage": message,
+                            "duration": duration
+                        })
+                        notification.destroyOnFinish()
+                    } else {
+                        // Fallback simple notification
+                        console.log("📢", title + ":", message)
+                    }
             }
         }
     }
@@ -1820,6 +1846,16 @@ ApplicationWindow {
             }
 
             Platform.MenuItem {
+                text: "Show Library"
+                onTriggered: {
+                    rootWindow.show()
+                    rootWindow.raise()
+                    rootWindow.requestActivate()
+                    showLibrary()
+                }
+            }
+
+            Platform.MenuItem {
                 text: "Show Middleware"
                 onTriggered: {
                     rootWindow.show()
@@ -1834,8 +1870,7 @@ ApplicationWindow {
             Platform.MenuItem {
                 text: "Recent Files"
                 enabled: recentFiles.length > 0
-
-                Platform.Menu {
+                subMenu: Platform.Menu {
                     id: recentFilesMenu
                     Component.onCompleted: {
                         updateRecentFilesMenu()
@@ -1845,7 +1880,7 @@ ApplicationWindow {
 
             Platform.MenuItem {
                 text: "Quick Actions"
-                Platform.Menu {
+                subMenu: Platform.Menu {
                     Platform.MenuItem {
                         text: "Take Screenshot"
                         onTriggered: takeScreenshot()
@@ -1858,6 +1893,18 @@ ApplicationWindow {
                         text: "Audio Settings"
                         onTriggered: showAudioSettings()
                     }
+                }
+            }
+
+            Platform.MenuSeparator {}
+
+            Platform.MenuItem {
+                text: "About Aegis"
+                onTriggered: {
+                    rootWindow.show()
+                    rootWindow.raise()
+                    rootWindow.requestActivate()
+                    showAbout()
                 }
             }
 
@@ -1930,12 +1977,13 @@ ApplicationWindow {
     // 8. UTILITY FUNCTIONS
     // ============================================
 
-    function showError(title, message, details = "") {
-        errorTitle.text = title
-        errorMessage.text = message
-        errorDetails.text = details
-        errorDisplay.visible = true
-        console.error("❌", title + ":", message, details ? "\n" + details : "")
+    function showError(title, message, details) {
+        if (details === undefined) details = ""
+            errorTitle.text = title
+            errorMessage.text = message
+            errorDetails.text = details
+            errorDisplay.visible = true
+            console.error("❌", title + ":", message, details ? "\n" + details : "")
     }
 
     function showCriticalError(message) {
@@ -2168,7 +2216,13 @@ ApplicationWindow {
 
     function cycleThroughRecentApps() {
         if (recentApps.length > 1) {
-            var currentIndex = recentApps.findIndex(app => app.id === currentMode)
+            var currentIndex = -1;
+            for (var i = 0; i < recentApps.length; ++i) {
+                if (recentApps[i].id === currentMode) {
+                    currentIndex = i;
+                    break;
+                }
+            }
             var nextIndex = (currentIndex + 1) % recentApps.length
             var nextApp = recentApps[nextIndex]
 
@@ -2397,9 +2451,9 @@ ApplicationWindow {
     signal systemMetricsUpdated(real cpu, real memory, real disk)
     signal recentFileAdded(var fileInfo)
     signal modeChanged(string newMode, string oldMode)
-    signal networkStatusChanged(int status)
+    signal networkStatusUpdated(int status)
     signal sessionTimeUpdated(int minutes)
-    signal projectModifiedChanged(bool modified)
+    signal projectModificationChanged(bool modified)
     signal mediaStateChanged(bool playing, real position, real duration)
 
     onCurrentModeChanged: {
@@ -2452,18 +2506,13 @@ ApplicationWindow {
 
     // Help function
     function showHelp() {
-        var helpMessage = "Aegis Media Suite v2.1.1 Help\n\n" +
-        "• F1 - Show this help\n" +
-        "• Ctrl+L - Return to Launcher\n" +
-        "• Ctrl+1-9 - Switch applications\n" +
-        "• Ctrl+Tab - Cycle through apps\n" +
-        "• Alt+Left - Go back\n" +
-        "• F11 - Toggle fullscreen\n" +
-        "• Ctrl+D - Debug overlay\n" +
-        "• Space - Play/Pause media\n\n" +
-        "Visit help.aegis.media for documentation."
-
-        showNotification("info", "Help", helpMessage)
+        // Open the user handbook via the C++ help bridge (AegisHelpMenu).
+        // Falls back to opening the website in a browser.
+        if (typeof helpBridge !== "undefined" && helpBridge !== null) {
+            helpBridge.showHelpContents()
+        } else {
+            Qt.openUrlExternally("https://aegis.media/docs")
+        }
     }
 
     // Project management functions
@@ -2538,132 +2587,136 @@ ApplicationWindow {
             return false
         }
     }
-}
 
-// ============================================
-// NOTIFICATION COMPONENT
-// ============================================
+    // ============================================
+    // NOTIFICATION COMPONENT
+    // ============================================
 
-// Notification.qml (inline component)
-Component {
-    id: notificationComponent
+    Component {
+        id: notificationComponent
 
-    Rectangle {
-        id: notification
-        width: parent.width
-        height: 70
-        radius: 6
-        color: {
-            switch(notificationType) {
-                case "error": return "#331a1a"
-                case "warning": return "#332b1a"
-                case "success": return "#1a3320"
-                case "info":
-                default: return "#1a1a33"
+        Rectangle {
+            id: notification
+            width: parent.width
+            height: 70
+            radius: 6
+            color: {
+                switch(notificationType) {
+                    case "error": return "#331a1a"
+                    case "warning": return "#332b1a"
+                    case "success": return "#1a3320"
+                    case "info":
+                    default: return "#1a1a33"
+                }
             }
-        }
-        border.color: {
-            switch(notificationType) {
-                case "error": return "#ff4444"
-                case "warning": return "#ffaa44"
-                case "success": return "#44ff88"
-                case "info":
-                default: return "#4488ff"
+            border.color: {
+                switch(notificationType) {
+                    case "error": return "#ff4444"
+                    case "warning": return "#ffaa44"
+                    case "success": return "#44ff88"
+                    case "info":
+                    default: return "#4488ff"
+                }
             }
-        }
-        border.width: 1
+            border.width: 1
 
-        property string notificationType: "info"
-        property string notificationTitle: ""
-        property string notificationMessage: ""
-        property int duration: 5000
+            property string notificationType: "info"
+            property string notificationTitle: ""
+            property string notificationMessage: ""
+            property int duration: 5000
 
-        RowLayout {
-            anchors.fill: parent
-            anchors.margins: 10
-            spacing: 15
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 15
 
-            // Icon
-            Text {
-                text: {
-                    switch(notificationType) {
-                        case "error": return "❌"
-                        case "warning": return "⚠️"
-                        case "success": return "✅"
-                        case "info":
-                        default: return "ℹ️"
+                // Icon
+                Text {
+                    text: {
+                        switch(notificationType) {
+                            case "error": return "❌"
+                            case "warning": return "⚠️"
+                            case "success": return "✅"
+                            case "info":
+                            default: return "ℹ️"
+                        }
+                    }
+                    font.pixelSize: 24
+                    Layout.alignment: Qt.AlignTop
+                }
+
+                // Content
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 3
+
+                    Text {
+                        text: notificationTitle
+                        color: "white"
+                        font.bold: true
+                        font.pixelSize: 13
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        text: notificationMessage
+                        color: "#aaaaaa"
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
                     }
                 }
-                font.pixelSize: 24
-                Layout.alignment: Qt.AlignTop
-            }
 
-            // Content
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 3
-
-                Text {
-                    text: notificationTitle
-                    color: "white"
-                    font.bold: true
-                    font.pixelSize: 13
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    text: notificationMessage
-                    color: "#aaaaaa"
-                    font.pixelSize: 11
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
+                // Close button
+                Button {
+                    text: "✕"
+                    flat: true
+                    onClicked: notification.destroy()
+                    Layout.alignment: Qt.AlignTop
+                    Layout.preferredWidth: 24
+                    Layout.preferredHeight: 24
                 }
             }
 
-            // Close button
-            Button {
-                text: "✕"
-                flat: true
-                onClicked: notification.destroy()
-                Layout.alignment: Qt.AlignTop
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 24
+            // Auto-dismiss timer
+            Timer {
+                id: dismissTimer
+                interval: notification.duration
+                onTriggered: notification.destroy()
             }
-        }
 
-        // Auto-dismiss timer
-        Timer {
-            id: dismissTimer
-            interval: notification.duration
-            onTriggered: notification.destroy()
-        }
-
-        Component.onCompleted: {
-            dismissTimer.start()
-            opacity = 0
-            y = -height
-
-            // Slide in animation
+            // Slide-in animation (triggered on Component.onCompleted)
             SequentialAnimation {
+                id: slideInAnim
                 NumberAnimation { target: notification; property: "opacity"; to: 1.0; duration: 300 }
                 NumberAnimation { target: notification; property: "y"; to: 0; duration: 300; easing.type: Easing.OutBack }
-            }.start()
-        }
+            }
 
-        function destroyOnFinish() {
-            // Slide out animation
+            // Slide-out animation (triggered by destroyOnFinish)
             SequentialAnimation {
+                id: slideOutAnim
                 NumberAnimation { target: notification; property: "opacity"; to: 0; duration: 300 }
-                NumberAnimation { target: notification; property: "y"; to: -height; duration: 300; easing.type: Easing.InBack }
+                NumberAnimation { target: notification; property: "y"; to: -notification.height; duration: 300; easing.type: Easing.InBack }
                 ScriptAction { script: notification.destroy() }
-            }.start()
-        }
+            }
 
-        MouseArea {
-            anchors.fill: parent
-            onClicked: notification.destroyOnFinish()
+            Component.onCompleted: {
+                dismissTimer.start()
+                opacity = 0
+                y = -height
+                slideInAnim.start()
+            }
+
+            function destroyOnFinish() {
+                slideOutAnim.start()
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: notification.destroyOnFinish()
+            }
         }
     }
 }

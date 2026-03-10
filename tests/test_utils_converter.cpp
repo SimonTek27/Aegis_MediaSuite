@@ -7,10 +7,11 @@ class TestConverter : public QObject {
     Q_OBJECT
 private slots:
     void default_job_is_not_active() {
-        MediaConverter c;
-        QVERIFY(!c.isBusy());
+        Converter c(nullptr);
+        QVERIFY(!c.converting());
     }
 };
 
 QTEST_MAIN(TestConverter)
 #include "test_utils_converter.moc"
+

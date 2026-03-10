@@ -1,9 +1,13 @@
-// ui_modtracker.qml
+// ui_modtracker.qml - Aegis Mod Tracker Interface
+//
+// This file implements a professional MOD tracker interface, inspired by classic
+// trackers like ProTracker, FastTracker II, and MilkyTracker. It includes a pattern
+// editor, instrument list, channel VU meters, and a waveform/spectrum display.
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
-import Aegis 1.0
 
 ApplicationWindow {
     id: root
@@ -311,7 +315,7 @@ ApplicationWindow {
                     currentPattern: tracker.currentPattern
 
                     onNoteEntered: (row, channel, note) => tracker.setNote(patternView.currentPattern, row, channel, note)
-                    onCurrentRowChanged: tracker.setCurrentRow(currentRow)
+                    onRowSelected: (row) => tracker.setCurrentRow(row)
                 }
 
                 // Hex/Dec toggle and zoom
@@ -491,12 +495,20 @@ ApplicationWindow {
         color: "#007acc"
         visible: statusText.text !== ""
 
+        // Use a timer to automatically hide the status message after a duration.
         property var hideTimer: null
 
         function showMessage(msg, duration) {
             statusText.text = msg
             if (hideTimer) clearTimeout(hideTimer)
-                hideTimer = setTimeout(() => statusText.text = "", duration)
+                // In QML, we use a Timer element instead of setTimeout.
+                if (!hideTimer) {
+                    hideTimer = Qt.createQmlObject('import QtQuick 2.0; Timer {}', statusBar);
+                }
+                hideTimer.interval = duration;
+            hideTimer.repeat = false;
+            hideTimer.onTriggered = function() { statusText.text = ""; };
+            hideTimer.start();
         }
 
         Text {
@@ -551,6 +563,7 @@ ApplicationWindow {
     }
 
     // Pattern Grid Component
+    // This component encapsulates the complex pattern editing logic, keeping the main file clean.
     component PatternGrid : Rectangle {
         property var tracker
         property int currentPattern: 0
@@ -560,7 +573,7 @@ ApplicationWindow {
         property bool hexMode: true
 
         signal noteEntered(int row, int channel, var note)
-        signal currentRowChanged(int row)
+        signal rowSelected(int row)
 
         color: "#1e1e1e"
         clip: true
@@ -671,11 +684,11 @@ ApplicationWindow {
                         break
                     case Qt.Key_Up:
                         currentRow = Math.max(0, currentRow - 1)
-                        currentRowChanged(currentRow)
+                        rowSelected(currentRow)
                         break
                     case Qt.Key_Down:
                         currentRow = Math.min(63, currentRow + 1)
-                        currentRowChanged(currentRow)
+                        rowSelected(currentRow)
                         break
                     case Qt.Key_Delete:
                         tracker.clearNote(currentPattern, currentRow, currentChannel)

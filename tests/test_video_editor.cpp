@@ -109,16 +109,16 @@ private slots:
     // ── Track management ───────────────────────────────────────────────────
 
     void testAddVideoTrack() {
-        Track* t = m_editor->addVideoTrack("Video 1");
+        VideoVideoTrack* t = m_editor->addVideoTrack("Video 1");
         QVERIFY(t != nullptr);
-        QCOMPARE(t->type(), Track::Type::Video);
+        QCOMPARE(t->type(), VideoTrack::Type::Video);
         QCOMPARE(t->name(), QString("Video 1"));
     }
 
     void testAddAudioTrack() {
-        Track* t = m_editor->addAudioTrack("Audio 1");
+        VideoTrack* t = m_editor->addAudioTrack("Audio 1");
         QVERIFY(t != nullptr);
-        QCOMPARE(t->type(), Track::Type::Audio);
+        QCOMPARE(t->type(), VideoTrack::Type::Audio);
     }
 
     void testAddVideoTrack_marksModified() {
@@ -127,7 +127,7 @@ private slots:
     }
 
     void testRemoveTrack() {
-        Track* t = m_editor->addVideoTrack("To Remove");
+        VideoVideoTrack* t = m_editor->addVideoTrack("To Remove");
         QVERIFY(t != nullptr);
         int before = m_editor->videoTracks().size();
         m_editor->removeTrack(t);
@@ -135,7 +135,7 @@ private slots:
     }
 
     void testTrackMute() {
-        Track* t = m_editor->addVideoTrack("Mute Test");
+        VideoVideoTrack* t = m_editor->addVideoTrack("Mute Test");
         QVERIFY(t != nullptr);
         t->setMuted(true);
         QVERIFY(t->isMuted());
@@ -144,7 +144,7 @@ private slots:
     }
 
     void testTrackLock() {
-        Track* t = m_editor->addVideoTrack("Lock Test");
+        VideoVideoTrack* t = m_editor->addVideoTrack("Lock Test");
         QVERIFY(t != nullptr);
         t->setLocked(true);
         QVERIFY(t->isLocked());
@@ -165,16 +165,18 @@ private slots:
         tmp.setFileTemplate(tmp.fileTemplate() + ".mp4");
         QVERIFY(tmp.open());
 
-        Track* track = m_editor->addVideoTrack("V");
+        VideoTrack* track = m_editor->addVideoTrack("V");
+        Q_UNUSED(track)
         Timecode pos{0, 30};
-        auto clip = m_editor->importClip(QUrl::fromLocalFile(tmp.fileName()), pos);
+        auto clip = m_editor->importMedia(QUrl::fromLocalFile(tmp.fileName()), pos);
         QVERIFY(clip != nullptr);
     }
 
     void testImportClip_invalidFile_returnsNull() {
-        Track* track = m_editor->addVideoTrack("V");
+        VideoTrack* track = m_editor->addVideoTrack("V");
+        Q_UNUSED(track)
         Timecode pos{0, 30};
-        auto clip = m_editor->importClip(QUrl("file:///nonexistent/clip.mp4"), pos);
+        auto clip = m_editor->importMedia(QUrl("file:///nonexistent/clip.mp4"), pos);
         QVERIFY(clip == nullptr);
     }
 
@@ -185,7 +187,7 @@ private slots:
 
         m_editor->addVideoTrack("V");
         Timecode pos{90, 30};  // 3 seconds in
-        auto clip = m_editor->importClip(QUrl::fromLocalFile(tmp.fileName()), pos);
+        auto clip = m_editor->importMedia(QUrl::fromLocalFile(tmp.fileName()), pos);
         if (clip) {
             QCOMPARE(clip->position().frames, pos.frames);
         }
@@ -198,7 +200,7 @@ private slots:
 
         m_editor->addVideoTrack("V");
         Timecode pos{0, 30};
-        auto clip = m_editor->importClip(QUrl::fromLocalFile(tmp.fileName()), pos);
+        auto clip = m_editor->importMedia(QUrl::fromLocalFile(tmp.fileName()), pos);
         if (!clip) QSKIP("Clip import not supported for empty file");
 
         int trackClipsBefore = m_editor->videoTracks().first()->clips().size();
@@ -365,4 +367,4 @@ private:
 };
 
 QTEST_MAIN(TestVideoEditor)
-#include "video_editor.moc"
+#include "test_video_editor.moc"

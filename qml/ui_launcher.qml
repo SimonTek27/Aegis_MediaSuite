@@ -1,28 +1,27 @@
 // ui_launcher.qml - Professional Aegis Media Suite Launcher
+// Embedded as a page inside main.qml's themeLoader (not a standalone window).
 
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtCore
 import Qt.labs.platform as Platform
-import QtQuick.Window
 
-ApplicationWindow {
+Item {
     id: launcherWindow
-    visible: true
-    width: 1400
-    height: 850
-    minimumWidth: 1000
-    minimumHeight: 600
-    title: "Aegis Media Suite - Launcher"
-    color: "#0a0a0a"
-    flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint |
-    Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint |
-    Qt.WindowCloseButtonHint
+    // Size is inherited from the parent Loader (anchors.fill: parent in main.qml).
+    // Color is provided by a background Rectangle below.
 
     // Signal emitted when the user selects an app to launch.
-    // Connect this in main.qml or from C++ to switch modes.
+    // Connected in main.qml's themeLoader.onLoaded to rootWindow.switchMode.
     signal appLaunchRequested(string mode)
+
+    // Background (Item has no 'color' property unlike ApplicationWindow)
+    Rectangle {
+        anchors.fill: parent
+        color: "#0a0a0a"
+        z: -1
+    }
 
     // Theme
     property var theme: {
@@ -1980,13 +1979,53 @@ ApplicationWindow {
             },
             {
                 id: "modtracker",
-                name: "Tracker",
+                name: "Mod Tracker",
                 icon: "🎚️",
                 description: "MOD tracker music composition",
                 category: "audio",
                 color: "#3F51B5",
                 usageCount: launcherSettings.appUsageCount?.modtracker || 0,
                 keywords: ["tracker", "music", "compose", "mod", "midi"]
+            },
+            {
+                id: "daw",
+                name: "DAW",
+                icon: "🎹",
+                description: "Digital Audio Workstation for music production",
+                category: "audio",
+                color: "#673AB7",
+                usageCount: launcherSettings.appUsageCount?.daw || 0,
+                keywords: ["daw", "record", "produce", "mix", "studio"]
+            },
+            {
+                id: "musicnotation",
+                name: "Music Notation",
+                icon: "🎼",
+                description: "Score editor and sheet music notation",
+                category: "audio",
+                color: "#795548",
+                usageCount: launcherSettings.appUsageCount?.musicnotation || 0,
+                keywords: ["notation", "score", "sheet", "music", "compose"]
+            },
+            {
+                id: "capture",
+                name: "Capture",
+                icon: "📹",
+                description: "Screen capture, webcam, DVB and IP camera recording",
+                category: "video",
+                color: "#607D8B",
+                usageCount: launcherSettings.appUsageCount?.capture || 0,
+                keywords: ["capture", "screen", "record", "webcam", "dvb"]
+            },
+            {
+                id: "streaming",
+                name: "Streaming",
+                icon: "📡",
+                description: "Live streaming and broadcast studio",
+                category: "media",
+                color: "#E91E63",
+                usageCount: launcherSettings.appUsageCount?.streaming || 0,
+                keywords: ["stream", "live", "broadcast", "twitch", "youtube"]
             }
         ]
 
@@ -2148,16 +2187,20 @@ ApplicationWindow {
 
         // Launch app — emit signal so C++ / main.qml can handle the transition
         var modeMap = {
-            "player":      "player",
-            "converter":   "converter",
-            "middleware":  "middleware",
-            "audioeditor": "audioeditor",
-            "videoeditor": "videoeditor",
-            "burner":      "discburner",
-            "labelmaker":  "disc_labelmaker",
-            "karaoke":     "karaoke",
-            "djmixer":     "djmix",
-            "modtracker":  "modtracker"
+            "player":        "player",
+            "converter":     "converter",
+            "middleware":    "middleware",
+            "audioeditor":   "audioeditor",
+            "videoeditor":   "videoeditor",
+            "burner":        "discburner",
+            "labelmaker":    "disc_labelmaker",
+            "karaoke":       "karaoke",
+            "djmixer":       "djmix",
+            "modtracker":    "modtracker",
+            "daw":           "daw",
+            "musicnotation": "musicnotation",
+            "capture":       "capture",
+            "streaming":     "streaming"
         }
         var mode = modeMap[appId]
         if (!mode) {
@@ -2167,7 +2210,7 @@ ApplicationWindow {
         launcherWindow.appLaunchRequested(mode)
 
         // Minimize launcher or keep it running
-        launcherWindow.visibility = Window.Minimized
+        // Window state managed by main.qml after mode switch
 
         // Show notification
         showNotification("🚀", "Launching " + getAppName(appId))
@@ -2285,14 +2328,14 @@ ApplicationWindow {
         switch(type) {
             case "audio":
             case "video":
-                launcherWindow.appLaunchRequested("mediaplayer")
+                launcherWindow.appLaunchRequested("player")
                 break
             case "project":
                 // Open in appropriate editor
                 if (filePath.endsWith(".aegisedit")) {
                     launcherWindow.appLaunchRequested("audioeditor")
                 } else if (filePath.endsWith(".aegisburn")) {
-                    launcherWindow.appLaunchRequested("disctools")
+                    launcherWindow.appLaunchRequested("discburner")
                 } else if (filePath.endsWith(".aegisconv")) {
                     launcherWindow.appLaunchRequested("converter")
                 } else if (filePath.endsWith(".aegismiddleware")) {
@@ -2303,12 +2346,12 @@ ApplicationWindow {
                 Qt.openUrlExternally("file:///" + filePath)
         }
 
-        launcherWindow.visibility = Window.Minimized
+        // Window state managed by main.qml after mode switch
     }
 
     function openProject(projectPath) {
         showNotification("📁", "Opening project: " + projectPath)
-        launcherWindow.appLaunchRequested("mediaplayer")
+        launcherWindow.appLaunchRequested("player")
     }
 
     // One-shot timer used by refreshAllData() — replaces setTimeout which
@@ -2359,11 +2402,11 @@ ApplicationWindow {
     }
 
     function startRecording() {
-        launcherWindow.appLaunchRequested("capture")
+        console.warn("Capture module not yet available")
     }
 
     function takeScreenshot() {
-        launcherWindow.appLaunchRequested("capture")
+        console.warn("Capture module not yet available")
     }
 
     function openAudioSettings() {

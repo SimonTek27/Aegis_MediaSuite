@@ -1,0 +1,12 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <qresource prefix="/translations">
+    <file>aegis_it.qm</file>
+    <file>aegis_de.qm</file>
+    <file>aegis_fr.qm</file>
+    <file>aegis_pt_BR.qm</file>
+    <file>aegis_zh_CN.qm</file>
+    <file>aegis_ru.qm</file>
+    <file>aegis_es.qm</file>
+  </qresource>
+</RCC>

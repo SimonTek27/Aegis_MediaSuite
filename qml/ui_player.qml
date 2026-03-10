@@ -503,12 +503,12 @@ Rectangle {
                     spacing: spacingSm
                     Layout.alignment: Qt.AlignVCenter
 
-                    QuickButton { text: "⏮"; onClicked: previousTrack() }
+                    QuickButton { label: "⏮"; onClicked: previousTrack() }
                     QuickButton {
-                        text: isPlaying ? "⏸" : "▶"
+                        label: isPlaying ? "⏸" : "▶"
                         onClicked: playPause()
                     }
-                    QuickButton { text: "⏭"; onClicked: nextTrack() }
+                    QuickButton { label: "⏭"; onClicked: nextTrack() }
                 }
 
                 Item { Layout.fillWidth: true }
@@ -639,7 +639,8 @@ Rectangle {
                         effect: MultiEffect {
                             shadowEnabled: true
                             shadowColor: accentGlow
-                            shadowOffset: Qt.point(0, 2)
+                            shadowHorizontalOffset: 0
+                            shadowVerticalOffset: 2
                             shadowBlur: 0.5
                         }
                     }
@@ -844,7 +845,7 @@ Rectangle {
                                 VolumeSlider {
                                     Layout.fillWidth: true
                                     volume: root.volume
-                                    onVolumeChanged: setVolume(value)
+                                    onVolumeSet: setVolume(value)
                                 }
                             }
 
@@ -888,8 +889,8 @@ Rectangle {
 
                     // Playlist & Media
                     TransportButton {
-                        text: "☰"
-                        tooltip: "Playlist"
+                        iconSource: "qrc:/icons/sc-actions-media-playlist.svg"
+                        label: "Playlist"
                         onClicked: togglePlaylist()
 
                         Badge {
@@ -901,16 +902,16 @@ Rectangle {
                     }
 
                     TransportButton {
-                        text: "⏏"
-                        tooltip: "Eject / Open"
+                        iconSource: "qrc:/icons/sc-actions-media-eject.svg"
+                        label: "Apri"
                         onClicked: openFileDialog()
                     }
 
                     Separator {}
 
                     TransportButton {
-                        text: "⏮"
-                        tooltip: "Previous Track"
+                        iconSource: "qrc:/icons/sc-actions-media-skip-backward.svg"
+                        label: "Precedente"
                         onClicked: previousTrack()
                     }
 
@@ -923,14 +924,8 @@ Rectangle {
                         border.width: 1
                         radius: 4
 
-                        Text {
-                            anchors.centerIn: parent
-                            text: isPlaying ? "⏸" : "▶"
-                            color: accentColor
-                            font.pixelSize: fontSizeXxl
-                        }
-
                         MouseArea {
+                            id: playMa
                             anchors.fill: parent
                             hoverEnabled: true
                             onEntered: parent.color = Qt.rgba(1, 0.55, 0, 0.2)
@@ -938,22 +933,38 @@ Rectangle {
                             onClicked: playPause()
                         }
 
-                        ToolTip {
-                            text: isPlaying ? "Pause" : "Play"
-                            visible: parent.MouseArea.containsMouse
-                            delay: 500
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 4
+
+                            Image {
+                                source: isPlaying
+                                        ? "qrc:/icons/sc-actions-media-playback-pause.svg"
+                                        : "qrc:/icons/sc-actions-media-playback-start.svg"
+                                fillMode: Image.PreserveAspectFit
+                                sourceSize.width: 18
+                                sourceSize.height: 18
+                            }
+
+                            Text {
+                                visible: playMa.containsMouse
+                                text: isPlaying ? "Pausa" : "Riproduci"
+                                color: accentColor
+                                font.family: jetBrainsMono.name
+                                font.pixelSize: fontSizeXs
+                            }
                         }
                     }
 
                     TransportButton {
-                        text: "⏭"
-                        tooltip: "Next Track"
+                        iconSource: "qrc:/icons/sc-actions-media-skip-forward.svg"
+                        label: "Successivo"
                         onClicked: nextTrack()
                     }
 
                     TransportButton {
-                        text: "⬛"
-                        tooltip: "Stop"
+                        iconSource: "qrc:/icons/sc-actions-media-playback-stop.svg"
+                        label: "Stop"
                         onClicked: stop()
                     }
 
@@ -961,22 +972,23 @@ Rectangle {
 
                     // Playback Mode
                     TransportButton {
-                        text: "🔀"
-                        tooltip: "Shuffle"
+                        iconSource: "qrc:/icons/sc-actions-media-repeat.svg"
+                        label: "Shuffle"
                         checkable: true
                         id: shuffleBtn
                     }
 
                     TransportButton {
-                        text: "🔁"
-                        tooltip: "Repeat"
-                        checked: true
+                        iconSource: "qrc:/icons/sc-actions-media-repeat.svg"
+                        label: "Ripeti"
+                        checkable: true
                         id: repeatBtn
                     }
 
                     TransportButton {
-                        text: "A-B"
-                        tooltip: "Set Loop A-B"
+                        iconSource: "qrc:/icons/sc-actions-media-playback-start.svg"
+                        label: "Loop A-B"
+                        checkable: true
                         id: loopBtn
                     }
                 }
@@ -1011,34 +1023,34 @@ Rectangle {
                     Layout.alignment: Qt.AlignVCenter
 
                     TransportButton {
-                        text: "ℹ"
-                        tooltip: "Metadata"
+                        iconSource: "qrc:/icons/sc-actions-system-settings.svg"
+                        label: "Metadata"
                         onClicked: toggleMetadata()
                     }
 
                     TransportButton {
-                        text: "⚙"
-                        tooltip: "Settings"
+                        iconSource: "qrc:/icons/sc-actions-system-settings.svg"
+                        label: "Impostazioni"
                         onClicked: toggleSettings()
                     }
 
                     TransportButton {
-                        text: "🔆"
-                        tooltip: "Theme"
+                        iconSource: "qrc:/icons/light-mode.svg"
+                        label: "Tema"
                         onClicked: toggleTheme()
                     }
 
                     Separator {}
 
                     TransportButton {
-                        text: "⛶"
-                        tooltip: "Fullscreen"
+                        iconSource: "qrc:/icons/maximize.svg"
+                        label: "Schermo intero"
                         onClicked: toggleFullscreen()
                     }
 
                     TransportButton {
-                        text: "⌃"
-                        tooltip: "Hide Controls"
+                        iconSource: "qrc:/icons/sc-actions-system-menu.svg"
+                        label: "Nascondi controlli"
                         onClicked: toggleUIVisibility()
                     }
                 }
@@ -1318,11 +1330,10 @@ Rectangle {
         anchors.fill: parent
         onClicked: root.forceActiveFocus()
     }
-}
 
-//=============================================================================
-// CUSTOM COMPONENTS
-//=============================================================================
+    //=============================================================================
+    // CUSTOM COMPONENTS
+    //=============================================================================
 
 // Metric Display Component
 component MetricDisplay : Row {
@@ -1357,7 +1368,7 @@ component MetricDisplay : Row {
 
 // Quick Button Component
 component QuickButton : Rectangle {
-    property string text
+    property string label
     signal clicked
 
     width: 30
@@ -1367,7 +1378,7 @@ component QuickButton : Rectangle {
 
     Text {
         anchors.centerIn: parent
-        text: parent.text
+        text: parent.label
         color: textPrimary
         font.pixelSize: fontSizeLg
     }
@@ -1383,7 +1394,7 @@ component QuickButton : Rectangle {
 // Media Tag Component
 component MediaTag : Rectangle {
     property string text
-    property color color: textPrimary
+    property color textColor: textPrimary
 
     height: 22
     width: tagText.implicitWidth + 12
@@ -1396,7 +1407,7 @@ component MediaTag : Rectangle {
         id: tagText
         anchors.centerIn: parent
         text: parent.text
-        color: parent.color
+        color: parent.textColor
         font.family: jetBrainsMono.name
         font.pixelSize: fontSizeXxs
         font.bold: true
@@ -1485,7 +1496,8 @@ component SeekBar : Rectangle {
 component VolumeSlider : Rectangle {
     property real volume
 
-    signal volumeChanged(real value)
+    // `volumeChanged` is auto-generated by the property; use a distinct name for the user action signal.
+    signal volumeSet(real value)
 
     height: 20
     color: bgTertiary
@@ -1519,7 +1531,7 @@ component VolumeSlider : Rectangle {
 
     MouseArea {
         anchors.fill: parent
-        onClicked: volumeChanged((mouse.x / width) * 100)
+        onClicked: volumeSet((mouse.x / width) * 100)
     }
 }
 
@@ -1562,10 +1574,10 @@ component AudioVisualizer : Row {
     }
 }
 
-// Transport Button Component
+// Transport Button Component (SVG icon + text on hover)
 component TransportButton : Rectangle {
-    property string text
-    property string tooltip
+    property url iconSource
+    property string label
     property bool checkable: false
     property bool checked: false
 
@@ -1575,18 +1587,30 @@ component TransportButton : Rectangle {
     height: controlHeight
     color: {
         if (checkable && checked) return accentColor
-            return ma.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
+        return ma.containsMouse ? Qt.rgba(1, 1, 1, 0.15) : "transparent"
     }
     radius: 4
     border.color: checkable && checked ? accentColor : "transparent"
     border.width: checkable && checked ? 1 : 0
 
-    Text {
+    Row {
         anchors.centerIn: parent
-        text: parent.text
-        color: (checkable && checked) ? "white" : textPrimary
-        font.family: jetBrainsMono.name
-        font.pixelSize: fontSizeLg
+        spacing: 4
+
+        Image {
+            source: iconSource
+            fillMode: Image.PreserveAspectFit
+            sourceSize.width: 16
+            sourceSize.height: 16
+        }
+
+        Text {
+            visible: ma.containsMouse
+            text: label
+            color: textPrimary
+            font.family: jetBrainsMono.name
+            font.pixelSize: fontSizeXs
+        }
     }
 
     MouseArea {
@@ -1595,21 +1619,15 @@ component TransportButton : Rectangle {
         hoverEnabled: true
         onClicked: {
             if (checkable) checked = !checked
-                parent.clicked()
+            parent.clicked()
         }
-    }
-
-    ToolTip {
-        text: parent.tooltip
-        visible: ma.containsMouse && parent.tooltip !== ""
-        delay: 500
     }
 }
 
 // Status Badge Component
 component StatusBadge : Rectangle {
     property string text
-    property color color: textPrimary
+    property color textColor: textPrimary
 
     height: 22
     width: statusText.implicitWidth + 12
@@ -1622,7 +1640,7 @@ component StatusBadge : Rectangle {
         id: statusText
         anchors.centerIn: parent
         text: parent.text
-        color: parent.color
+        color: parent.textColor
         font.family: jetBrainsMono.name
         font.pixelSize: fontSizeXs
         font.bold: true
@@ -1644,3 +1662,5 @@ component Separator : Rectangle {
     color: borderLight
     anchors.verticalCenter: parent.verticalCenter
 }
+
+} // end root Rectangle

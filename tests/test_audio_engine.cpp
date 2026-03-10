@@ -64,7 +64,7 @@ private slots:
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
     void initTestCase() {
-        m_engine = std::make_unique<AudioEngine>(nullptr);
+        m_engine = std::make_unique<Aegis::AudioEngine>(nullptr);
         QVERIFY(m_engine != nullptr);
     }
 
@@ -198,12 +198,10 @@ private slots:
         for (int i = 0; i < frames * 2; ++i) buf.data()[i] = 1.0f;
 
         effect->process(buf, 48000, EffectContext::Realtime);
-    }
 
-};
-
-QTEST_MAIN(TestAudioEngine)
-#include "audio_engine.moc"
+        for (int i = 0; i < frames; ++i) {
+            float L = buf.data()[i * 2];
+            float R = buf.data()[i * 2 + 1];
             QVERIFY(qAbs(L - R) < 0.05f);
         }
     }
@@ -262,7 +260,7 @@ QTEST_MAIN(TestAudioEngine)
     // ── Signal emission ────────────────────────────────────────────────────
 
     void testSpectrumUpdatedSignalEmitted() {
-        QSignalSpy spy(m_engine.get(), &AudioEngine::spectrumUpdated);
+        QSignalSpy spy(m_engine.get(), &Aegis::AudioEngine::spectrumUpdated);
         auto sine = makeSine(440.0f, 48000, 4096);
         m_engine->calculateSpectrum(sine.data(), static_cast<int>(sine.size()), 1);
         spy.wait(200);
@@ -270,8 +268,8 @@ QTEST_MAIN(TestAudioEngine)
     }
 
 private:
-    std::unique_ptr<AudioEngine> m_engine;
+    std::unique_ptr<Aegis::AudioEngine> m_engine;
 };
 
 QTEST_MAIN(TestAudioEngine)
-#include "audio_engine.moc"
+#include "test_audio_engine.moc"

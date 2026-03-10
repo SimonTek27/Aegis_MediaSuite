@@ -1269,11 +1269,10 @@ ApplicationWindow {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottomMargin: 40
     }
-}
 
-// Component for canvas elements
-// This would normally be in a separate file: CanvasElement.qml
-component CanvasElement: Item {
+    // Component for canvas elements
+    // This would normally be in a separate file: CanvasElement.qml
+    component CanvasElement: Item {
     property var elementData
     property bool selected: false
     property real scaleFactor: 1.0
@@ -1384,13 +1383,13 @@ component CanvasElement: Item {
 
 // Color picker button component
 component ColorButton: Rectangle {
-    property color color: "#ffffff"
+    property color pickerColor: "#ffffff"
     signal colorChanged(color newColor)
 
     width: 32
     height: 32
     radius: 4
-    color: parent.color
+    color: pickerColor
     border { color: theme.border; width: 1 }
 
     MouseArea {
@@ -1400,7 +1399,9 @@ component ColorButton: Rectangle {
 
     ColorDialog {
         id: colorDialog
-        selectedColor: parent.color
+        selectedColor: parent.pickerColor
         onAccepted: parent.colorChanged(selectedColor)
     }
 }
+
+} // end root element

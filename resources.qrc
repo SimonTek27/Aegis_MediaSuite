@@ -1,25 +1,236 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
-  <qresource prefix="/">
-    <file>qml/main.qml</file>
-    <file alias="qml/MediaSuite/Main.qml">qml/main.qml</file>
-    <file>qml/ui_launcher.qml</file>
-    <file>qml/ui_player.qml</file>
-    <file>qml/ui_audioeditor.qml</file>
-    <file>qml/ui_videoeditor.qml</file>
-    <file>qml/ui_daw.qml</file>
-    <file>qml/ui_discburner.qml</file>
-    <file>qml/ui_djmixer.qml</file>
-    <file>qml/ui_karaoke.qml</file>
-    <file>qml/ui_modtracker.qml</file>
-    <file>qml/ui_musicnotation_editor.qml</file>
-    <file>qml/ui_middleware.qml</file>
-    <file>qml/ui_disc_labelmaker.qml</file>
-    <file>qml/ui_converter.qml</file>
-    <file>qml/ui_screencapture.qml</file>
-    <file>assets/fonts/JetBrainsMono-Regular.ttf</file>
-    <file>assets/fonts/JetBrainsMono-Bold.ttf</file>
-    <file>assets/images/aegismps_bg.jpg</file>
-    <file>assets/icons/app_icon.svg</file>
+
+  <!-- QML user-interface files -->
+  <qresource prefix="/qml">
+    <file alias="main.qml">qml/main.qml</file>
+    <file alias="ui_audioeditor.qml">qml/ui_audioeditor.qml</file>
+    <file alias="ui_converter.qml">qml/ui_converter.qml</file>
+    <file alias="ui_daw.qml">qml/ui_daw.qml</file>
+    <file alias="ui_disc_labelmaker.qml">qml/ui_disc_labelmaker.qml</file>
+    <file alias="ui_discburner.qml">qml/ui_discburner.qml</file>
+    <file alias="ui_djmixer.qml">qml/ui_djmixer.qml</file>
+    <file alias="ui_karaoke.qml">qml/ui_karaoke.qml</file>
+    <file alias="ui_launcher.qml">qml/ui_launcher.qml</file>
+    <file alias="ui_middleware.qml">qml/ui_middleware.qml</file>
+    <file alias="ui_modtracker.qml">qml/ui_modtracker.qml</file>
+    <file alias="ui_musicnotation_editor.qml">qml/ui_musicnotation_editor.qml</file>
+    <file alias="ui_player.qml">qml/ui_player.qml</file>
+    <file alias="ui_screencapture.qml">qml/ui_screencapture.qml</file>
+    <file alias="ui_videoeditor.qml">qml/ui_videoeditor.qml</file>
   </qresource>
+
+  <!-- Action/status/app SVG icons (sc-* Breeze-style + app icon) -->
+  <qresource prefix="/icons">
+        <file alias="app_icon.svg">assets/icons/app_icon.svg</file>
+        <file alias="arpeggiator.svg">assets/icons/arpeggiator.svg</file>
+        <file alias="asio.svg">assets/icons/asio.svg</file>
+        <file alias="bit-depth.svg">assets/icons/bit-depth.svg</file>
+        <file alias="buffer.svg">assets/icons/buffer.svg</file>
+        <file alias="close.svg">assets/icons/close.svg</file>
+        <file alias="compressor.svg">assets/icons/compressor.svg</file>
+        <file alias="copy.svg">assets/icons/copy.svg</file>
+        <file alias="cpu.svg">assets/icons/cpu.svg</file>
+        <file alias="cut.svg">assets/icons/cut.svg</file>
+        <file alias="dark-mode.svg">assets/icons/dark-mode.svg</file>
+        <file alias="equalizer.svg">assets/icons/equalizer.svg</file>
+        <file alias="export.svg">assets/icons/export.svg</file>
+        <file alias="import.svg">assets/icons/import.svg</file>
+        <file alias="latency.svg">assets/icons/latency.svg</file>
+        <file alias="library.svg">assets/icons/library.svg</file>
+        <file alias="light-mode.svg">assets/icons/light-mode.svg</file>
+        <file alias="maximize.svg">assets/icons/maximize.svg</file>
+        <file alias="metronome.svg">assets/icons/metronome.svg</file>
+        <file alias="midi.svg">assets/icons/midi.svg</file>
+        <file alias="minimize.svg">assets/icons/minimize.svg</file>
+        <file alias="mono.svg">assets/icons/mono.svg</file>
+        <file alias="new.svg">assets/icons/new.svg</file>
+        <file alias="open.svg">assets/icons/open.svg</file>
+        <file alias="paste.svg">assets/icons/paste.svg</file>
+        <file alias="pause.svg">assets/icons/pause.svg</file>
+        <file alias="piano.svg">assets/icons/piano.svg</file>
+        <file alias="play.svg">assets/icons/play.svg</file>
+        <file alias="quantize.svg">assets/icons/quantize.svg</file>
+        <file alias="record.svg">assets/icons/record.svg</file>
+        <file alias="redo.svg">assets/icons/redo.svg</file>
+        <file alias="restore.svg">assets/icons/restore.svg</file>
+        <file alias="reverb.svg">assets/icons/reverb.svg</file>
+        <file alias="sample-rate.svg">assets/icons/sample-rate.svg</file>
+        <file alias="save-as.svg">assets/icons/save-as.svg</file>
+        <file alias="save.svg">assets/icons/save.svg</file>
+        <file alias="sc-actions-audio.svg">assets/icons/sc-actions-audio.svg</file>
+        <file alias="sc-actions-download.svg">assets/icons/sc-actions-download.svg</file>
+        <file alias="sc-actions-export.svg">assets/icons/sc-actions-export.svg</file>
+        <file alias="sc-actions-go-home.svg">assets/icons/sc-actions-go-home.svg</file>
+        <file alias="sc-actions-go-next.svg">assets/icons/sc-actions-go-next.svg</file>
+        <file alias="sc-actions-go-previous.svg">assets/icons/sc-actions-go-previous.svg</file>
+        <file alias="sc-actions-import.svg">assets/icons/sc-actions-import.svg</file>
+        <file alias="sc-actions-media-burn.svg">assets/icons/sc-actions-media-burn.svg</file>
+        <file alias="sc-actions-media-eject.svg">assets/icons/sc-actions-media-eject.svg</file>
+        <file alias="sc-actions-media-playback-pause.svg">assets/icons/sc-actions-media-playback-pause.svg</file>
+        <file alias="sc-actions-media-playback-start.svg">assets/icons/sc-actions-media-playback-start.svg</file>
+        <file alias="sc-actions-media-playback-stop.svg">assets/icons/sc-actions-media-playback-stop.svg</file>
+        <file alias="sc-actions-media-playlist.svg">assets/icons/sc-actions-media-playlist.svg</file>
+        <file alias="sc-actions-media-repeat.svg">assets/icons/sc-actions-media-repeat.svg</file>
+        <file alias="sc-actions-media-skip-backward.svg">assets/icons/sc-actions-media-skip-backward.svg</file>
+        <file alias="sc-actions-media-skip-fastforward.svg">assets/icons/sc-actions-media-skip-fastforward.svg</file>
+        <file alias="sc-actions-media-skip-forward.svg">assets/icons/sc-actions-media-skip-forward.svg</file>
+        <file alias="sc-actions-media-skip-rewind.svg">assets/icons/sc-actions-media-skip-rewind.svg</file>
+        <file alias="sc-actions-process-stop.svg">assets/icons/sc-actions-process-stop.svg</file>
+        <file alias="sc-actions-record.svg">assets/icons/sc-actions-record.svg</file>
+        <file alias="sc-actions-search.svg">assets/icons/sc-actions-search.svg</file>
+        <file alias="sc-actions-system-menu.svg">assets/icons/sc-actions-system-menu.svg</file>
+        <file alias="sc-actions-system-settings.svg">assets/icons/sc-actions-system-settings.svg</file>
+        <file alias="sc-actions-view-refresh.svg">assets/icons/sc-actions-view-refresh.svg</file>
+        <file alias="sc-apps-aegis-audioeditor.svg">assets/icons/sc-apps-aegis-audioeditor.svg</file>
+        <file alias="sc-apps-aegis-converter.svg">assets/icons/sc-apps-aegis-converter.svg</file>
+        <file alias="sc-apps-aegis-daw.svg">assets/icons/sc-apps-aegis-daw.svg</file>
+        <file alias="sc-apps-aegis-disctools.svg">assets/icons/sc-apps-aegis-disctools.svg</file>
+        <file alias="sc-apps-aegis-djmixer.svg">assets/icons/sc-apps-aegis-djmixer.svg</file>
+        <file alias="sc-apps-aegis-karaoke.svg">assets/icons/sc-apps-aegis-karaoke.svg</file>
+        <file alias="sc-apps-aegis-labelmaker.svg">assets/icons/sc-apps-aegis-labelmaker.svg</file>
+        <file alias="sc-apps-aegis-launcher.svg">assets/icons/sc-apps-aegis-launcher.svg</file>
+        <file alias="sc-apps-aegis-mediaplayer.svg">assets/icons/sc-apps-aegis-mediaplayer.svg</file>
+        <file alias="sc-apps-aegis-middleware.svg">assets/icons/sc-apps-aegis-middleware.svg</file>
+        <file alias="sc-apps-aegis-modtracker.svg">assets/icons/sc-apps-aegis-modtracker.svg</file>
+        <file alias="sc-apps-aegis-videoeditor.svg">assets/icons/sc-apps-aegis-videoeditor.svg</file>
+        <file alias="sc-mime-audio-mp3.svg">assets/icons/sc-mime-audio-mp3.svg</file>
+        <file alias="sc-mime-disc-brd.svg">assets/icons/sc-mime-disc-brd.svg</file>
+        <file alias="sc-mime-disc-cd.svg">assets/icons/sc-mime-disc-cd.svg</file>
+        <file alias="sc-mime-disc-dvd.svg">assets/icons/sc-mime-disc-dvd.svg</file>
+        <file alias="sc-mime-disc-vcd.svg">assets/icons/sc-mime-disc-vcd.svg</file>
+        <file alias="sc-mime-video-mp4.svg">assets/icons/sc-mime-video-mp4.svg</file>
+        <file alias="split.svg">assets/icons/split.svg</file>
+        <file alias="stereo.svg">assets/icons/stereo.svg</file>
+        <file alias="stop.svg">assets/icons/stop.svg</file>
+        <file alias="tempo.svg">assets/icons/tempo.svg</file>
+        <file alias="time-sig.svg">assets/icons/time-sig.svg</file>
+        <file alias="undo.svg">assets/icons/undo.svg</file>
+        <file alias="vst.svg">assets/icons/vst.svg</file>
+        <file alias="zoom-in.svg">assets/icons/zoom-in.svg</file>
+        <file alias="zoom-out.svg">assets/icons/zoom-out.svg</file>
+    </qresource>
+
+  <!-- Compatibility alias for C++ code using :/assets/icons/... path -->
+  <qresource prefix="/assets/icons">
+        <file alias="icons/app_icon.svg">assets/icons/app_icon.svg</file>
+        <file alias="icons/arpeggiator.svg">assets/icons/arpeggiator.svg</file>
+        <file alias="icons/asio.svg">assets/icons/asio.svg</file>
+        <file alias="icons/bit-depth.svg">assets/icons/bit-depth.svg</file>
+        <file alias="icons/buffer.svg">assets/icons/buffer.svg</file>
+        <file alias="icons/close.svg">assets/icons/close.svg</file>
+        <file alias="icons/compressor.svg">assets/icons/compressor.svg</file>
+        <file alias="icons/copy.svg">assets/icons/copy.svg</file>
+        <file alias="icons/cpu.svg">assets/icons/cpu.svg</file>
+        <file alias="icons/cut.svg">assets/icons/cut.svg</file>
+        <file alias="icons/dark-mode.svg">assets/icons/dark-mode.svg</file>
+        <file alias="icons/equalizer.svg">assets/icons/equalizer.svg</file>
+        <file alias="icons/export.svg">assets/icons/export.svg</file>
+        <file alias="icons/import.svg">assets/icons/import.svg</file>
+        <file alias="icons/latency.svg">assets/icons/latency.svg</file>
+        <file alias="icons/library.svg">assets/icons/library.svg</file>
+        <file alias="icons/light-mode.svg">assets/icons/light-mode.svg</file>
+        <file alias="icons/maximize.svg">assets/icons/maximize.svg</file>
+        <file alias="icons/metronome.svg">assets/icons/metronome.svg</file>
+        <file alias="icons/midi.svg">assets/icons/midi.svg</file>
+        <file alias="icons/minimize.svg">assets/icons/minimize.svg</file>
+        <file alias="icons/mono.svg">assets/icons/mono.svg</file>
+        <file alias="icons/new.svg">assets/icons/new.svg</file>
+        <file alias="icons/open.svg">assets/icons/open.svg</file>
+        <file alias="icons/paste.svg">assets/icons/paste.svg</file>
+        <file alias="icons/pause.svg">assets/icons/pause.svg</file>
+        <file alias="icons/piano.svg">assets/icons/piano.svg</file>
+        <file alias="icons/play.svg">assets/icons/play.svg</file>
+        <file alias="icons/quantize.svg">assets/icons/quantize.svg</file>
+        <file alias="icons/record.svg">assets/icons/record.svg</file>
+        <file alias="icons/redo.svg">assets/icons/redo.svg</file>
+        <file alias="icons/restore.svg">assets/icons/restore.svg</file>
+        <file alias="icons/reverb.svg">assets/icons/reverb.svg</file>
+        <file alias="icons/sample-rate.svg">assets/icons/sample-rate.svg</file>
+        <file alias="icons/save-as.svg">assets/icons/save-as.svg</file>
+        <file alias="icons/save.svg">assets/icons/save.svg</file>
+        <file alias="icons/sc-actions-audio.svg">assets/icons/sc-actions-audio.svg</file>
+        <file alias="icons/sc-actions-download.svg">assets/icons/sc-actions-download.svg</file>
+        <file alias="icons/sc-actions-export.svg">assets/icons/sc-actions-export.svg</file>
+        <file alias="icons/sc-actions-go-home.svg">assets/icons/sc-actions-go-home.svg</file>
+        <file alias="icons/sc-actions-go-next.svg">assets/icons/sc-actions-go-next.svg</file>
+        <file alias="icons/sc-actions-go-previous.svg">assets/icons/sc-actions-go-previous.svg</file>
+        <file alias="icons/sc-actions-import.svg">assets/icons/sc-actions-import.svg</file>
+        <file alias="icons/sc-actions-media-burn.svg">assets/icons/sc-actions-media-burn.svg</file>
+        <file alias="icons/sc-actions-media-eject.svg">assets/icons/sc-actions-media-eject.svg</file>
+        <file alias="icons/sc-actions-media-playback-pause.svg">assets/icons/sc-actions-media-playback-pause.svg</file>
+        <file alias="icons/sc-actions-media-playback-start.svg">assets/icons/sc-actions-media-playback-start.svg</file>
+        <file alias="icons/sc-actions-media-playback-stop.svg">assets/icons/sc-actions-media-playback-stop.svg</file>
+        <file alias="icons/sc-actions-media-playlist.svg">assets/icons/sc-actions-media-playlist.svg</file>
+        <file alias="icons/sc-actions-media-repeat.svg">assets/icons/sc-actions-media-repeat.svg</file>
+        <file alias="icons/sc-actions-media-skip-backward.svg">assets/icons/sc-actions-media-skip-backward.svg</file>
+        <file alias="icons/sc-actions-media-skip-fastforward.svg">assets/icons/sc-actions-media-skip-fastforward.svg</file>
+        <file alias="icons/sc-actions-media-skip-forward.svg">assets/icons/sc-actions-media-skip-forward.svg</file>
+        <file alias="icons/sc-actions-media-skip-rewind.svg">assets/icons/sc-actions-media-skip-rewind.svg</file>
+        <file alias="icons/sc-actions-process-stop.svg">assets/icons/sc-actions-process-stop.svg</file>
+        <file alias="icons/sc-actions-record.svg">assets/icons/sc-actions-record.svg</file>
+        <file alias="icons/sc-actions-search.svg">assets/icons/sc-actions-search.svg</file>
+        <file alias="icons/sc-actions-system-menu.svg">assets/icons/sc-actions-system-menu.svg</file>
+        <file alias="icons/sc-actions-system-settings.svg">assets/icons/sc-actions-system-settings.svg</file>
+        <file alias="icons/sc-actions-view-refresh.svg">assets/icons/sc-actions-view-refresh.svg</file>
+        <file alias="icons/sc-apps-aegis-audioeditor.svg">assets/icons/sc-apps-aegis-audioeditor.svg</file>
+        <file alias="icons/sc-apps-aegis-converter.svg">assets/icons/sc-apps-aegis-converter.svg</file>
+        <file alias="icons/sc-apps-aegis-daw.svg">assets/icons/sc-apps-aegis-daw.svg</file>
+        <file alias="icons/sc-apps-aegis-disctools.svg">assets/icons/sc-apps-aegis-disctools.svg</file>
+        <file alias="icons/sc-apps-aegis-djmixer.svg">assets/icons/sc-apps-aegis-djmixer.svg</file>
+        <file alias="icons/sc-apps-aegis-karaoke.svg">assets/icons/sc-apps-aegis-karaoke.svg</file>
+        <file alias="icons/sc-apps-aegis-labelmaker.svg">assets/icons/sc-apps-aegis-labelmaker.svg</file>
+        <file alias="icons/sc-apps-aegis-launcher.svg">assets/icons/sc-apps-aegis-launcher.svg</file>
+        <file alias="icons/sc-apps-aegis-mediaplayer.svg">assets/icons/sc-apps-aegis-mediaplayer.svg</file>
+        <file alias="icons/sc-apps-aegis-middleware.svg">assets/icons/sc-apps-aegis-middleware.svg</file>
+        <file alias="icons/sc-apps-aegis-modtracker.svg">assets/icons/sc-apps-aegis-modtracker.svg</file>
+        <file alias="icons/sc-apps-aegis-videoeditor.svg">assets/icons/sc-apps-aegis-videoeditor.svg</file>
+        <file alias="icons/sc-mime-audio-mp3.svg">assets/icons/sc-mime-audio-mp3.svg</file>
+        <file alias="icons/sc-mime-disc-brd.svg">assets/icons/sc-mime-disc-brd.svg</file>
+        <file alias="icons/sc-mime-disc-cd.svg">assets/icons/sc-mime-disc-cd.svg</file>
+        <file alias="icons/sc-mime-disc-dvd.svg">assets/icons/sc-mime-disc-dvd.svg</file>
+        <file alias="icons/sc-mime-disc-vcd.svg">assets/icons/sc-mime-disc-vcd.svg</file>
+        <file alias="icons/sc-mime-video-mp4.svg">assets/icons/sc-mime-video-mp4.svg</file>
+        <file alias="icons/split.svg">assets/icons/split.svg</file>
+        <file alias="icons/stereo.svg">assets/icons/stereo.svg</file>
+        <file alias="icons/stop.svg">assets/icons/stop.svg</file>
+        <file alias="icons/tempo.svg">assets/icons/tempo.svg</file>
+        <file alias="icons/time-sig.svg">assets/icons/time-sig.svg</file>
+        <file alias="icons/undo.svg">assets/icons/undo.svg</file>
+        <file alias="icons/vst.svg">assets/icons/vst.svg</file>
+        <file alias="icons/zoom-in.svg">assets/icons/zoom-in.svg</file>
+        <file alias="icons/zoom-out.svg">assets/icons/zoom-out.svg</file>
+    </qresource>
+
+  <!-- Bundled fonts -->
+  <qresource prefix="/fonts">
+    <file alias="JetBrainsMono-Bold.ttf">assets/fonts/JetBrainsMono-Bold.ttf</file>
+    <file alias="JetBrainsMono-Regular.ttf">assets/fonts/JetBrainsMono-Regular.ttf</file>
+    <file alias="VCR_OSD_MONO.ttf">assets/fonts/VCR_OSD_MONO.ttf</file>
+  </qresource>
+
+  <!-- Compatibility alias: old :/assets/fonts/... path -->
+  <qresource prefix="/assets/fonts">
+    <file alias="JetBrainsMono-Bold.ttf">assets/fonts/JetBrainsMono-Bold.ttf</file>
+    <file alias="JetBrainsMono-Regular.ttf">assets/fonts/JetBrainsMono-Regular.ttf</file>
+    <file alias="VCR_OSD_MONO.ttf">assets/fonts/VCR_OSD_MONO.ttf</file>
+  </qresource>
+
+  <!-- Background and UI images -->
+  <qresource prefix="/images">
+    <file alias="aegismps_bg.jpg">assets/images/aegismps_bg.jpg</file>
+  </qresource>
+
+  <!-- Compatibility alias: old :/assets/images/... path -->
+  <qresource prefix="/assets/images">
+    <file alias="aegismps_bg.jpg">assets/images/aegismps_bg.jpg</file>
+  </qresource>
+
+  <!-- Greyscale application logos -->
+  <qresource prefix="/assets">
+    <file alias="aegis_bw.png">assets/aegis_bw.png</file>
+    <file alias="aegis_bw_mediasuite.png">assets/aegis_bw_mediasuite.png</file>
+    <file alias="icons/app_icon.svg">assets/icons/app_icon.svg</file>
+  </qresource>
+
 </RCC>

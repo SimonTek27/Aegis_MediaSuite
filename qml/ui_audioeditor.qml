@@ -8,8 +8,6 @@ import QtQuick.Dialogs
 import QtMultimedia
 import org.kde.kirigami as Kirigami
 import org.kde.ksvg as KSvg
-import Aegis.AudioEditor 1.0
-import Aegis.Analysis 1.0
 
 ApplicationWindow {
     id: mainWindow
@@ -24,7 +22,7 @@ ApplicationWindow {
 
     // Modern title with dynamic content
     title: {
-        var base = "🎵 GoldWave Studio Professional"
+        var base = "🎵 Aegis Audio Editor"  // Fix: was incorrectly labelled with competitor product name
         if (AudioEngine.modified) base += " • Modified"
             if (AudioEngine.currentFile) {
                 var name = AudioEngine.currentFile.split('/').pop()
@@ -1037,7 +1035,7 @@ ApplicationWindow {
     }
 
     component StatusBadge: Rectangle {
-        property string text
+        property string label
         property string iconSource
         property bool highlight: false
 
@@ -1060,7 +1058,7 @@ ApplicationWindow {
             }
 
             Text {
-                text: parent.parent.text
+                text: parent.parent.label
                 color: parent.parent.highlight ? accentColor : themes[currentTheme].textSecondary
                 font.pixelSize: 12
             }

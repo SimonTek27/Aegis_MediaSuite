@@ -1,8 +1,6 @@
 #include <QtTest>
 #include "streaming.h"
 
-using namespace Aegis;
-
 class TestStreaming : public QObject {
     Q_OBJECT
 private slots:
