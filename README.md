@@ -34,10 +34,15 @@ Core ideas:
 | **Library** | SQLite database, TagLib‑based metadata, smart playlists and folder watching |
 | **Streaming** | integration with yt‑dlp, internet radio, IPTV/M3U and capture devices via **Media Player** |
 | **Label Maker** | Print labels |
+| **Photoeditor** | Photoeditor |
+
+https://glaxnimate.org/it/news/releases/0.6.0/
+
 
 See:
 - `audio.md` for details of the audio engine and DSP graph
 - `video.md` for video pipeline and UI modes
+- `image.md` for photo and image editor
 - `projectstatus.md` for current maturity and roadmap snapshot
 
 ---
